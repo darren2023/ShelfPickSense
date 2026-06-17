@@ -9,10 +9,10 @@ from pathlib import Path
 
 from loguru import logger
 
-from analysis.dataset import build_dataset
+from analysis.dataset import Dataset, build_dataset
 from analysis.features.registry import FeatureRegistry, default_registry
-from analysis.models import create_model
-from analysis.records import load_all_records
+from analysis.models import SklearnPickingModel, create_model
+from analysis.records import RecordData, load_all_records
 
 
 @dataclass
@@ -52,6 +52,27 @@ def train_model(
         len(dataset.box_samples),
     )
 
+    result, _ = train_model_from_dataset(
+        dataset,
+        records=records,
+        data_dir=data_dir,
+        output_dir=output_dir,
+        model_name=model_name,
+    )
+    return result
+
+
+def train_model_from_dataset(
+    dataset: Dataset,
+    *,
+    records: list[RecordData],
+    data_dir: Path,
+    output_dir: Path,
+    model_name: str = "sklearn_rf",
+) -> tuple[TrainResult, SklearnPickingModel]:
+    """使用已构建的数据集训练模型，供 benchmark 复用数据处理结果。"""
+    data_dir = Path(data_dir)
+    output_dir = Path(output_dir)
     model = create_model(model_name)
     logger.info("开始拟合模型: {}", model.name)
     model.fit(dataset)
@@ -74,4 +95,4 @@ def train_model(
         encoding="utf-8",
     )
     logger.debug("训练结果已写入: {}", output_dir / "train_result.json")
-    return result
+    return result, model

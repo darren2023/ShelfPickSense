@@ -11,9 +11,12 @@ from typing import Any
 
 from loguru import logger
 
-from analysis.evaluation import ModelEvaluation, compare_reports, evaluate_model, save_report
+from analysis.dataset import build_dataset
+from analysis.evaluation import Evaluator, ModelEvaluation, compare_reports, save_report
+from analysis.features.registry import default_registry
 from analysis.models import SUPPORTED_MODEL_NAMES
-from analysis.train import TrainResult, train_model
+from analysis.records import load_all_records
+from analysis.train import TrainResult, train_model_from_dataset
 
 
 DEFAULT_MODEL_NAMES = list(SUPPORTED_MODEL_NAMES)
@@ -67,13 +70,39 @@ def run_benchmark(
         eval_data_dir,
         output_dir,
     )
+    registry = default_registry()
+    logger.info("benchmark 加载训练数据: {}", train_data_dir)
+    train_records = load_all_records(train_data_dir)
+    logger.info("benchmark 构建训练数据集")
+    train_dataset = build_dataset(train_records, registry)
+    logger.info(
+        "benchmark 训练数据集就绪: records={}, frames={}, positive_frames={}, box_samples={}",
+        len(train_records),
+        train_dataset.frame_count,
+        train_dataset.positive_frame_count,
+        len(train_dataset.box_samples),
+    )
+
+    if train_data_dir.resolve() == eval_data_dir.resolve():
+        eval_records = train_records
+        logger.info("benchmark 复用训练记录作为评测记录")
+    else:
+        logger.info("benchmark 加载评测数据: {}", eval_data_dir)
+        eval_records = load_all_records(eval_data_dir)
+    evaluator = Evaluator(eval_records, registry=registry)
 
     def _run_one(model_name: str) -> tuple[str, TrainResult, ModelEvaluation]:
         model_dir = output_dir / model_name
         try:
             logger.info("benchmark 子任务开始: model={}, output={}", model_name, model_dir)
-            train_result = train_model(train_data_dir, model_dir, model_name=model_name)
-            report = evaluate_model(model_dir, eval_data_dir)
+            train_result, model = train_model_from_dataset(
+                train_dataset,
+                records=train_records,
+                data_dir=train_data_dir,
+                output_dir=model_dir,
+                model_name=model_name,
+            )
+            report = evaluator.evaluate(model, data_dir=str(eval_data_dir.resolve()))
             save_report(report, model_dir / "eval_report.json")
             logger.info(
                 "benchmark 子任务完成: model={}, picking_f1={:.4f}, box_f1={:.4f}",

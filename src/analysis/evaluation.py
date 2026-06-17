@@ -10,10 +10,9 @@ from typing import Any
 
 from loguru import logger
 
-from analysis.dataset import build_dataset
 from analysis.features.registry import FeatureRegistry, default_registry
 from analysis.models import PickingModel, SklearnPickingModel
-from analysis.records import RecordData, load_all_records
+from analysis.records import FramePersons, RecordData, load_all_records
 
 
 @dataclass
@@ -144,12 +143,13 @@ def predict_record(
     model: PickingModel,
     record: RecordData,
     registry: FeatureRegistry | None = None,
+    frames: list[FramePersons] | None = None,
 ) -> list[dict[str, Any]]:
     reg = registry or default_registry()
     assert isinstance(model, SklearnPickingModel)
     results: list[dict[str, Any]] = []
 
-    for frame in record.frames():
+    for frame in frames if frames is not None else record.frames():
         frame_feat = reg.extract_frame_features(record, frame)
         x = frame_feat.to_vector(model.frame_feature_names)
         pred = model.predict_frame(x, record_id=record.record_id, frame_idx=frame.frame_idx)
@@ -183,13 +183,6 @@ class Evaluator:
         self.records = records
         self.registry = registry or default_registry()
         logger.debug("初始化评测器: records={}", len(records))
-        self.dataset = build_dataset(records, self.registry)
-        logger.debug(
-            "评测数据集构建完成: frames={}, positive_frames={}, box_samples={}",
-            self.dataset.frame_count,
-            self.dataset.positive_frame_count,
-            len(self.dataset.box_samples),
-        )
 
     def evaluate(self, model: PickingModel, *, data_dir: str) -> ModelEvaluation:
         logger.info("开始评测: model={}, records={}", getattr(model, "name", model.__class__.__name__), len(self.records))
@@ -199,11 +192,12 @@ class Evaluator:
         pred_boxes: list[set[str]] = []
 
         for record in self.records:
-            logger.debug("评测记录: record_id={}, frames={}", record.record_id, len(record.frames()))
-            preds = predict_record(model, record, self.registry)
+            frames = record.frames()
+            logger.debug("评测记录: record_id={}, frames={}", record.record_id, len(frames))
+            preds = predict_record(model, record, self.registry, frames=frames)
             pred_by_frame = {p["frame_idx"]: p for p in preds}
 
-            for frame in record.frames():
+            for frame in frames:
                 label = record.labels.label_for(frame.frame_idx)
                 pred = pred_by_frame.get(frame.frame_idx, {})
                 y_true.append(label.is_picking)
