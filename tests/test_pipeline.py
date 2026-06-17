@@ -63,13 +63,16 @@ def test_feature_registry_extensible(fixture_data_dir: Path):
 
 
 def test_benchmark_runs_multiple_models(fixture_data_dir: Path, tmp_path: Path):
-    from analysis.benchmark import run_benchmark
+    from analysis.benchmark import DEFAULT_MODEL_NAMES, run_benchmark
+
+    assert len(DEFAULT_MODEL_NAMES) > 2
 
     output_dir = tmp_path / "benchmark"
     result = run_benchmark(
         train_data_dir=fixture_data_dir,
         output_dir=output_dir,
         model_names=["sklearn_rf", "sklearn_logistic"],
+        jobs=2,
     )
 
     assert [r.model_name for r in result.reports] == ["sklearn_rf", "sklearn_logistic"]

@@ -9,6 +9,7 @@ from pathlib import Path
 
 from analysis.benchmark import DEFAULT_MODEL_NAMES, run_benchmark
 from analysis.evaluation import compare_reports, evaluate_model, save_report
+from analysis.models import SUPPORTED_MODEL_NAMES
 from analysis.train import train_model
 
 
@@ -61,6 +62,7 @@ def _cmd_benchmark(args: argparse.Namespace) -> int:
         eval_data_dir=Path(args.eval_data_dir) if args.eval_data_dir else None,
         output_dir=Path(args.output),
         model_names=args.models,
+        jobs=args.jobs,
     )
     print(json.dumps(result.comparison, ensure_ascii=False, indent=2))
     print(f"\n批量对比报告已保存: {Path(args.output) / 'benchmark_summary.json'}")
@@ -80,7 +82,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_train.add_argument(
         "--model",
         default="sklearn_rf",
-        choices=["sklearn_rf", "sklearn_logistic"],
+        choices=SUPPORTED_MODEL_NAMES,
         help="模型类型",
     )
     p_train.set_defaults(func=_cmd_train)
@@ -107,9 +109,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--models",
         nargs="+",
         default=DEFAULT_MODEL_NAMES,
-        choices=DEFAULT_MODEL_NAMES,
+        choices=SUPPORTED_MODEL_NAMES,
         help="需要批量运行的模型列表",
     )
+    p_bench.add_argument("--jobs", type=int, default=8, help="并行运行的模型数量（默认 8）")
     p_bench.set_defaults(func=_cmd_benchmark)
 
     return parser

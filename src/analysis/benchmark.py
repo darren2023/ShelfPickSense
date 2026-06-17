@@ -3,16 +3,18 @@
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from analysis.evaluation import ModelEvaluation, compare_reports, evaluate_model, save_report
+from analysis.models import SUPPORTED_MODEL_NAMES
 from analysis.train import TrainResult, train_model
 
 
-DEFAULT_MODEL_NAMES = ["sklearn_rf", "sklearn_logistic"]
+DEFAULT_MODEL_NAMES = list(SUPPORTED_MODEL_NAMES)
 
 
 @dataclass
@@ -45,6 +47,7 @@ def run_benchmark(
     output_dir: Path,
     model_names: list[str] | None = None,
     eval_data_dir: Path | None = None,
+    jobs: int = 1,
 ) -> BenchmarkResult:
     """批量训练多个模型，并在同一评测集上生成对比结果。"""
     train_data_dir = Path(train_data_dir)
@@ -53,17 +56,29 @@ def run_benchmark(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     names = list(model_names or DEFAULT_MODEL_NAMES)
-    train_results: list[TrainResult] = []
-    reports: list[ModelEvaluation] = []
+    workers = max(1, int(jobs or 1))
 
-    for model_name in names:
+    def _run_one(model_name: str) -> tuple[str, TrainResult, ModelEvaluation]:
         model_dir = output_dir / model_name
         train_result = train_model(train_data_dir, model_dir, model_name=model_name)
         report = evaluate_model(model_dir, eval_data_dir)
         save_report(report, model_dir / "eval_report.json")
+        return model_name, train_result, report
 
-        train_results.append(train_result)
-        reports.append(report)
+    results_by_name: dict[str, tuple[TrainResult, ModelEvaluation]] = {}
+    if workers == 1 or len(names) <= 1:
+        for model_name in names:
+            name, train_result, report = _run_one(model_name)
+            results_by_name[name] = (train_result, report)
+    else:
+        with ThreadPoolExecutor(max_workers=min(workers, len(names))) as executor:
+            futures = {executor.submit(_run_one, model_name): model_name for model_name in names}
+            for future in as_completed(futures):
+                name, train_result, report = future.result()
+                results_by_name[name] = (train_result, report)
+
+    train_results = [results_by_name[name][0] for name in names]
+    reports = [results_by_name[name][1] for name in names]
 
     comparison = compare_reports(reports)
     result = BenchmarkResult(

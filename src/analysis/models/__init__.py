@@ -10,12 +10,23 @@ from typing import Any
 
 import joblib
 import numpy as np
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.ensemble import ExtraTreesClassifier, GradientBoostingClassifier, RandomForestClassifier
+from sklearn.neighbors import KNeighborsClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
+from sklearn.svm import SVC
 
 from analysis.dataset import Dataset
+
+SUPPORTED_MODEL_NAMES = [
+    "sklearn_rf",
+    "sklearn_logistic",
+    "sklearn_extra_trees",
+    "sklearn_gradient_boosting",
+    "sklearn_svm_rbf",
+    "sklearn_knn",
+]
 
 
 @dataclass
@@ -46,30 +57,52 @@ class PickingModel(ABC):
     def load(cls, path: Path) -> PickingModel: ...
 
 
-def _make_picking_clf(model_type: str) -> Pipeline:
+def _make_classifier(model_type: str, *, for_box: bool = False) -> Pipeline:
     if model_type == "logistic":
         est = LogisticRegression(max_iter=1000, class_weight="balanced")
-    else:
-        est = RandomForestClassifier(
-            n_estimators=100,
-            max_depth=12,
+    elif model_type == "extra_trees":
+        est = ExtraTreesClassifier(
+            n_estimators=80 if for_box else 120,
+            max_depth=10 if for_box else 12,
             class_weight="balanced",
             random_state=42,
         )
-    return Pipeline([("scaler", StandardScaler()), ("clf", est)])
-
-
-def _make_box_clf(model_type: str) -> Pipeline:
-    if model_type == "logistic":
-        est = LogisticRegression(max_iter=1000, class_weight="balanced")
-    else:
+    elif model_type == "gradient_boosting":
+        est = GradientBoostingClassifier(
+            n_estimators=80 if for_box else 120,
+            max_depth=3,
+            random_state=42,
+        )
+    elif model_type == "svm_rbf":
+        est = SVC(
+            C=2.0,
+            gamma="scale",
+            class_weight="balanced",
+            probability=True,
+            random_state=42,
+        )
+    elif model_type == "knn":
+        est = KNeighborsClassifier(n_neighbors=3, weights="distance")
+    elif model_type == "random_forest":
         est = RandomForestClassifier(
-            n_estimators=80,
-            max_depth=10,
+            n_estimators=80 if for_box else 100,
+            max_depth=10 if for_box else 12,
             class_weight="balanced",
             random_state=42,
         )
+    else:
+        raise ValueError(f"未知模型类型: {model_type}")
     return Pipeline([("scaler", StandardScaler()), ("clf", est)])
+
+
+def _positive_probability(clf: Pipeline, x: np.ndarray) -> float:
+    if not hasattr(clf, "predict_proba"):
+        return float(clf.predict(x)[0])
+    probabilities = clf.predict_proba(x)[0]
+    classes = list(getattr(clf, "classes_", []))
+    if 1 in classes:
+        return float(probabilities[classes.index(1)])
+    return 0.0
 
 
 @dataclass
@@ -90,7 +123,7 @@ class SklearnPickingModel(PickingModel):
 
         x_pick = np.vstack([s.x for s in dataset.frame_samples]) if dataset.frame_samples else np.empty((0, 0))
         y_pick = np.array([int(s.is_picking) for s in dataset.frame_samples], dtype=np.int32)
-        self.picking_clf = _make_picking_clf(self.model_type)
+        self.picking_clf = _make_classifier(self.model_type)
         if len(y_pick) > 0 and len(np.unique(y_pick)) > 1:
             self.picking_clf.fit(x_pick, y_pick)
         elif len(y_pick) > 0:
@@ -100,7 +133,7 @@ class SklearnPickingModel(PickingModel):
 
         x_box = np.vstack([s.x for s in dataset.box_samples]) if dataset.box_samples else np.empty((0, 0))
         y_box = np.array([int(s.is_target) for s in dataset.box_samples], dtype=np.int32)
-        self.box_clf = _make_box_clf(self.model_type)
+        self.box_clf = _make_classifier(self.model_type, for_box=True)
         if len(y_box) > 0 and len(np.unique(y_box)) > 1:
             self.box_clf.fit(x_box, y_box)
         elif len(y_box) > 0:
@@ -110,7 +143,7 @@ class SklearnPickingModel(PickingModel):
         if self.picking_clf is None:
             raise RuntimeError("模型尚未训练")
         x2 = x.reshape(1, -1)
-        prob = float(self.picking_clf.predict_proba(x2)[0, 1]) if hasattr(self.picking_clf, "predict_proba") else 0.0
+        prob = _positive_probability(self.picking_clf, x2)
         is_picking = bool(self.picking_clf.predict(x2)[0])
         return PickingPrediction(
             record_id=record_id,
@@ -129,10 +162,7 @@ class SklearnPickingModel(PickingModel):
         tokens: list[str] = []
         for token, x in box_features:
             x2 = x.reshape(1, -1)
-            if hasattr(self.box_clf, "predict_proba"):
-                prob = float(self.box_clf.predict_proba(x2)[0, 1])
-            else:
-                prob = float(self.box_clf.predict(x2)[0])
+            prob = _positive_probability(self.box_clf, x2)
             if prob >= self.box_score_threshold:
                 tokens.append(token)
         return tokens
@@ -169,12 +199,20 @@ class SklearnPickingModel(PickingModel):
 
 
 MODEL_REGISTRY: dict[str, type[SklearnPickingModel]] = {
-    "sklearn_rf": SklearnPickingModel,
-    "sklearn_logistic": SklearnPickingModel,
+    name: SklearnPickingModel for name in SUPPORTED_MODEL_NAMES
 }
 
 
 def create_model(model_name: str, **kwargs: Any) -> SklearnPickingModel:
-    if model_name == "sklearn_logistic":
-        return SklearnPickingModel(model_type="logistic", name=model_name, **kwargs)
-    return SklearnPickingModel(model_type="random_forest", name=model_name or "sklearn_rf", **kwargs)
+    model_name = model_name or "sklearn_rf"
+    model_types = {
+        "sklearn_rf": "random_forest",
+        "sklearn_logistic": "logistic",
+        "sklearn_extra_trees": "extra_trees",
+        "sklearn_gradient_boosting": "gradient_boosting",
+        "sklearn_svm_rbf": "svm_rbf",
+        "sklearn_knn": "knn",
+    }
+    if model_name not in model_types:
+        raise ValueError(f"未知模型: {model_name}，可用模型: {', '.join(SUPPORTED_MODEL_NAMES)}")
+    return SklearnPickingModel(model_type=model_types[model_name], name=model_name, **kwargs)
