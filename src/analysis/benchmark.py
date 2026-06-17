@@ -9,6 +9,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from loguru import logger
+
 from analysis.evaluation import ModelEvaluation, compare_reports, evaluate_model, save_report
 from analysis.models import SUPPORTED_MODEL_NAMES
 from analysis.train import TrainResult, train_model
@@ -57,13 +59,32 @@ def run_benchmark(
 
     names = list(model_names or DEFAULT_MODEL_NAMES)
     workers = max(1, int(jobs or 1))
+    logger.info(
+        "准备运行 benchmark: models={}, workers={}, train_data={}, eval_data={}, output={}",
+        names,
+        min(workers, len(names)),
+        train_data_dir,
+        eval_data_dir,
+        output_dir,
+    )
 
     def _run_one(model_name: str) -> tuple[str, TrainResult, ModelEvaluation]:
         model_dir = output_dir / model_name
-        train_result = train_model(train_data_dir, model_dir, model_name=model_name)
-        report = evaluate_model(model_dir, eval_data_dir)
-        save_report(report, model_dir / "eval_report.json")
-        return model_name, train_result, report
+        try:
+            logger.info("benchmark 子任务开始: model={}, output={}", model_name, model_dir)
+            train_result = train_model(train_data_dir, model_dir, model_name=model_name)
+            report = evaluate_model(model_dir, eval_data_dir)
+            save_report(report, model_dir / "eval_report.json")
+            logger.info(
+                "benchmark 子任务完成: model={}, picking_f1={:.4f}, box_f1={:.4f}",
+                model_name,
+                report.picking.f1,
+                report.box.micro_f1,
+            )
+            return model_name, train_result, report
+        except Exception:
+            logger.exception("benchmark 子任务失败: model={}", model_name)
+            raise
 
     results_by_name: dict[str, tuple[TrainResult, ModelEvaluation]] = {}
     if workers == 1 or len(names) <= 1:
@@ -95,4 +116,5 @@ def run_benchmark(
         json.dumps(result.to_dict(), ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+    logger.info("benchmark 汇总报告已保存: {}", output_dir / "benchmark_summary.json")
     return result

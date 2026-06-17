@@ -8,6 +8,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from loguru import logger
+
 from analysis.dataset import build_dataset
 from analysis.features.registry import FeatureRegistry, default_registry
 from analysis.models import PickingModel, SklearnPickingModel
@@ -180,15 +182,24 @@ class Evaluator:
     ) -> None:
         self.records = records
         self.registry = registry or default_registry()
+        logger.debug("初始化评测器: records={}", len(records))
         self.dataset = build_dataset(records, self.registry)
+        logger.debug(
+            "评测数据集构建完成: frames={}, positive_frames={}, box_samples={}",
+            self.dataset.frame_count,
+            self.dataset.positive_frame_count,
+            len(self.dataset.box_samples),
+        )
 
     def evaluate(self, model: PickingModel, *, data_dir: str) -> ModelEvaluation:
+        logger.info("开始评测: model={}, records={}", getattr(model, "name", model.__class__.__name__), len(self.records))
         y_true: list[bool] = []
         y_pred: list[bool] = []
         true_boxes: list[set[str]] = []
         pred_boxes: list[set[str]] = []
 
         for record in self.records:
+            logger.debug("评测记录: record_id={}, frames={}", record.record_id, len(record.frames()))
             preds = predict_record(model, record, self.registry)
             pred_by_frame = {p["frame_idx"]: p for p in preds}
 
@@ -204,6 +215,14 @@ class Evaluator:
 
         picking = compute_picking_metrics(y_true, y_pred)
         box = compute_box_metrics(true_boxes, pred_boxes)
+        logger.info(
+            "评测指标: model={}, picking_f1={:.4f}, recall={:.4f}, precision={:.4f}, box_f1={:.4f}",
+            getattr(model, "name", model.__class__.__name__),
+            picking.f1,
+            picking.recall,
+            picking.precision,
+            box.micro_f1,
+        )
         return ModelEvaluation(
             model_name=getattr(model, "name", model.__class__.__name__),
             data_dir=data_dir,
@@ -224,7 +243,9 @@ def evaluate_model(
     *,
     registry: FeatureRegistry | None = None,
 ) -> ModelEvaluation:
+    logger.info("加载评测数据: {}", data_dir)
     records = load_all_records(data_dir)
+    logger.info("加载模型: {}", model_path)
     model = SklearnPickingModel.load(model_path)
     evaluator = Evaluator(records, registry=registry)
     return evaluator.evaluate(model, data_dir=str(data_dir.resolve()))
@@ -234,6 +255,7 @@ def save_report(report: ModelEvaluation, output_path: Path) -> Path:
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(report.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+    logger.info("评测报告已保存: {}", output_path)
     return output_path
 
 
