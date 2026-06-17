@@ -60,8 +60,9 @@ def _cmd_eval(args: argparse.Namespace) -> int:
     out = Path(args.report) if args.report else Path(args.model) / "eval_report.json"
     save_report(report, out)
     logger.info(
-        "评测完成: model={}, picking_f1={:.4f}, recall={:.4f}, precision={:.4f}, box_f1={:.4f}",
+        "评测完成: model={}, macro_f1={:.4f}, picking_f1={:.4f}, recall={:.4f}, precision={:.4f}, box_f1={:.4f}",
         report.model_name,
+        report.picking.macro_f1,
         report.picking.f1,
         report.picking.recall,
         report.picking.precision,

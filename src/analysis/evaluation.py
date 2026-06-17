@@ -27,6 +27,11 @@ class PickingMetrics:
     fp: int
     fn: int
     tn: int
+    negative_precision: float = 0.0
+    negative_recall: float = 0.0
+    negative_f1: float = 0.0
+    macro_f1: float = 0.0
+    balanced_accuracy: float = 0.0
 
 
 @dataclass
@@ -78,6 +83,11 @@ def compute_picking_metrics(y_true: list[bool], y_pred: list[bool]) -> PickingMe
     precision = _safe_div(tp, tp + fp)
     recall = _safe_div(tp, tp + fn)
     f1 = _safe_div(2 * precision * recall, precision + recall)
+    negative_precision = _safe_div(tn, tn + fn)
+    negative_recall = _safe_div(tn, tn + fp)
+    negative_f1 = _safe_div(2 * negative_precision * negative_recall, negative_precision + negative_recall)
+    macro_f1 = (f1 + negative_f1) / 2.0
+    balanced_accuracy = (recall + negative_recall) / 2.0
     accuracy = _safe_div(tp + tn, len(y_true))
     return PickingMetrics(
         accuracy=accuracy,
@@ -90,6 +100,11 @@ def compute_picking_metrics(y_true: list[bool], y_pred: list[bool]) -> PickingMe
         fp=fp,
         fn=fn,
         tn=tn,
+        negative_precision=negative_precision,
+        negative_recall=negative_recall,
+        negative_f1=negative_f1,
+        macro_f1=macro_f1,
+        balanced_accuracy=balanced_accuracy,
     )
 
 
@@ -210,8 +225,9 @@ class Evaluator:
         picking = compute_picking_metrics(y_true, y_pred)
         box = compute_box_metrics(true_boxes, pred_boxes)
         logger.info(
-            "评测指标: model={}, picking_f1={:.4f}, recall={:.4f}, precision={:.4f}, box_f1={:.4f}",
+            "评测指标: model={}, macro_f1={:.4f}, picking_f1={:.4f}, recall={:.4f}, precision={:.4f}, box_f1={:.4f}",
             getattr(model, "name", model.__class__.__name__),
+            picking.macro_f1,
             picking.f1,
             picking.recall,
             picking.precision,
@@ -260,7 +276,10 @@ def compare_reports(reports: list[ModelEvaluation]) -> list[dict[str, Any]]:
         rows.append(
             {
                 "model_name": r.model_name,
+                "macro_f1": r.picking.macro_f1,
+                "balanced_accuracy": r.picking.balanced_accuracy,
                 "picking_f1": r.picking.f1,
+                "negative_f1": r.picking.negative_f1,
                 "picking_recall": r.picking.recall,
                 "picking_precision": r.picking.precision,
                 "box_exact_match": r.box.exact_match_ratio,
@@ -268,4 +287,4 @@ def compare_reports(reports: list[ModelEvaluation]) -> list[dict[str, Any]]:
                 "evaluated_at": r.evaluated_at,
             }
         )
-    return sorted(rows, key=lambda x: x["picking_f1"], reverse=True)
+    return sorted(rows, key=lambda x: x["macro_f1"], reverse=True)

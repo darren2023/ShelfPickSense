@@ -28,6 +28,8 @@ def test_load_and_train_eval(fixture_data_dir: Path, tmp_path: Path):
 
     report = evaluate_model(model_dir, fixture_data_dir)
     assert report.picking.f1 >= 0.5
+    assert 0.0 <= report.picking.macro_f1 <= 1.0
+    assert 0.0 <= report.picking.balanced_accuracy <= 1.0
     assert report.extra["frame_count"] == 10
 
 
@@ -77,6 +79,22 @@ def test_benchmark_runs_multiple_models(fixture_data_dir: Path, tmp_path: Path):
 
     assert [r.model_name for r in result.reports] == ["sklearn_rf", "sklearn_logistic"]
     assert len(result.comparison) == 2
+    assert "macro_f1" in result.comparison[0]
+    assert "negative_f1" in result.comparison[0]
     assert (output_dir / "sklearn_rf" / "eval_report.json").is_file()
     assert (output_dir / "sklearn_logistic" / "eval_report.json").is_file()
     assert (output_dir / "benchmark_summary.json").is_file()
+
+
+def test_picking_macro_f1_metrics():
+    from analysis.evaluation import compute_picking_metrics
+
+    metrics = compute_picking_metrics(
+        y_true=[True, True, False, False],
+        y_pred=[True, False, False, True],
+    )
+
+    assert metrics.f1 == pytest.approx(0.5)
+    assert metrics.negative_f1 == pytest.approx(0.5)
+    assert metrics.macro_f1 == pytest.approx(0.5)
+    assert metrics.balanced_accuracy == pytest.approx(0.5)
