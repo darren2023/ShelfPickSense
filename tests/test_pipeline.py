@@ -11,6 +11,8 @@ def fixture_data_dir(tmp_path: Path) -> Path:
 
 
 def test_load_and_train_eval(fixture_data_dir: Path, tmp_path: Path):
+    import json
+
     from analysis.evaluation import evaluate_model
     from analysis.records import load_record
     from analysis.train import train_model
@@ -26,11 +28,17 @@ def test_load_and_train_eval(fixture_data_dir: Path, tmp_path: Path):
     assert result.frame_count == 10
     assert result.positive_frames == 3
 
-    report = evaluate_model(model_dir, fixture_data_dir)
+    predictions_path = tmp_path / "predictions.json"
+    report = evaluate_model(model_dir, fixture_data_dir, predictions_output_path=predictions_path)
     assert report.picking.f1 >= 0.5
     assert 0.0 <= report.picking.macro_f1 <= 1.0
     assert 0.0 <= report.picking.balanced_accuracy <= 1.0
     assert report.extra["frame_count"] == 10
+    assert predictions_path.is_file()
+    predictions = json.loads(predictions_path.read_text(encoding="utf-8"))
+    assert predictions["prediction_count"] == 10
+    first = predictions["predictions"][0]
+    assert {"record_id", "frame_idx", "true_is_picking", "pred_is_picking", "picking_prob"} <= set(first)
 
 
 def test_no_event_review_all_negative(tmp_path: Path):
@@ -82,7 +90,9 @@ def test_benchmark_runs_multiple_models(fixture_data_dir: Path, tmp_path: Path):
     assert "macro_f1" in result.comparison[0]
     assert "negative_f1" in result.comparison[0]
     assert (output_dir / "sklearn_rf" / "eval_report.json").is_file()
+    assert (output_dir / "sklearn_rf" / "eval_predictions.json").is_file()
     assert (output_dir / "sklearn_logistic" / "eval_report.json").is_file()
+    assert (output_dir / "sklearn_logistic" / "eval_predictions.json").is_file()
     assert (output_dir / "benchmark_summary.json").is_file()
 
 

@@ -102,7 +102,11 @@ def run_benchmark(
                 output_dir=model_dir,
                 model_name=model_name,
             )
-            report = evaluator.evaluate(model, data_dir=str(eval_data_dir.resolve()))
+            report = evaluator.evaluate(
+                model,
+                data_dir=str(eval_data_dir.resolve()),
+                predictions_output_path=model_dir / "eval_predictions.json",
+            )
             save_report(report, model_dir / "eval_report.json")
             logger.info(
                 "benchmark 子任务完成: model={}, picking_f1={:.4f}, box_f1={:.4f}",

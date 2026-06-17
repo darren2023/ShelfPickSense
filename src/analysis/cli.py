@@ -56,7 +56,12 @@ def _cmd_train(args: argparse.Namespace) -> int:
 
 def _cmd_eval(args: argparse.Namespace) -> int:
     logger.info("开始评测模型: model={}, data_dir={}", args.model, args.data_dir)
-    report = evaluate_model(Path(args.model), Path(args.data_dir))
+    predictions_out = Path(args.predictions) if args.predictions else Path(args.model) / "eval_predictions.json"
+    report = evaluate_model(
+        Path(args.model),
+        Path(args.data_dir),
+        predictions_output_path=predictions_out,
+    )
     out = Path(args.report) if args.report else Path(args.model) / "eval_report.json"
     save_report(report, out)
     logger.info(
@@ -70,6 +75,7 @@ def _cmd_eval(args: argparse.Namespace) -> int:
     )
     print(json.dumps(report.to_dict(), ensure_ascii=False, indent=2))
     print(f"\n报告已保存: {out}")
+    print(f"预测结果已保存: {predictions_out}")
     return 0
 
 
@@ -154,6 +160,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_eval.add_argument("--data-dir", required=True, help="评测数据目录")
     p_eval.add_argument("--model", required=True, help="已训练模型目录")
     p_eval.add_argument("--report", default="", help="评测报告输出路径（默认写入模型目录）")
+    p_eval.add_argument("--predictions", default="", help="预测结果输出路径（默认写入模型目录）")
     _add_logging_args(p_eval)
     p_eval.set_defaults(func=_cmd_eval)
 

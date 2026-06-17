@@ -199,12 +199,19 @@ class Evaluator:
         self.registry = registry or default_registry()
         logger.debug("初始化评测器: records={}", len(records))
 
-    def evaluate(self, model: PickingModel, *, data_dir: str) -> ModelEvaluation:
+    def evaluate(
+        self,
+        model: PickingModel,
+        *,
+        data_dir: str,
+        predictions_output_path: Path | None = None,
+    ) -> ModelEvaluation:
         logger.info("开始评测: model={}, records={}", getattr(model, "name", model.__class__.__name__), len(self.records))
         y_true: list[bool] = []
         y_pred: list[bool] = []
         true_boxes: list[set[str]] = []
         pred_boxes: list[set[str]] = []
+        prediction_rows: list[dict[str, Any]] = []
 
         for record in self.records:
             frames = record.frames()
@@ -215,8 +222,25 @@ class Evaluator:
             for frame in frames:
                 label = record.labels.label_for(frame.frame_idx)
                 pred = pred_by_frame.get(frame.frame_idx, {})
-                y_true.append(label.is_picking)
-                y_pred.append(bool(pred.get("is_picking")))
+                true_is_picking = label.is_picking
+                pred_is_picking = bool(pred.get("is_picking"))
+                true_box_tokens = list(label.confirmed_box_tokens)
+                pred_box_tokens = list(pred.get("predicted_box_tokens") or [])
+                y_true.append(true_is_picking)
+                y_pred.append(pred_is_picking)
+
+                prediction_rows.append(
+                    {
+                        "record_id": record.record_id,
+                        "frame_idx": frame.frame_idx,
+                        "true_is_picking": true_is_picking,
+                        "pred_is_picking": pred_is_picking,
+                        "picking_prob": float(pred.get("picking_prob") or 0.0),
+                        "true_box_tokens": true_box_tokens,
+                        "predicted_box_tokens": pred_box_tokens,
+                        "box_exact_match": set(true_box_tokens) == set(pred_box_tokens),
+                    }
+                )
 
                 if label.is_picking and label.confirmed_box_tokens:
                     true_boxes.append(set(label.confirmed_box_tokens))
@@ -233,7 +257,7 @@ class Evaluator:
             picking.precision,
             box.micro_f1,
         )
-        return ModelEvaluation(
+        report = ModelEvaluation(
             model_name=getattr(model, "name", model.__class__.__name__),
             data_dir=data_dir,
             record_ids=[r.record_id for r in self.records],
@@ -245,6 +269,10 @@ class Evaluator:
                 "box_eval_frames": len(true_boxes),
             },
         )
+        if predictions_output_path is not None:
+            save_predictions(prediction_rows, predictions_output_path)
+            report.extra["predictions_path"] = str(Path(predictions_output_path).resolve())
+        return report
 
 
 def evaluate_model(
@@ -252,13 +280,31 @@ def evaluate_model(
     data_dir: Path,
     *,
     registry: FeatureRegistry | None = None,
+    predictions_output_path: Path | None = None,
 ) -> ModelEvaluation:
     logger.info("加载评测数据: {}", data_dir)
     records = load_all_records(data_dir)
     logger.info("加载模型: {}", model_path)
     model = SklearnPickingModel.load(model_path)
     evaluator = Evaluator(records, registry=registry)
-    return evaluator.evaluate(model, data_dir=str(data_dir.resolve()))
+    return evaluator.evaluate(
+        model,
+        data_dir=str(data_dir.resolve()),
+        predictions_output_path=predictions_output_path,
+    )
+
+
+def save_predictions(rows: list[dict[str, Any]], output_path: Path) -> Path:
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "schema": 1,
+        "prediction_count": len(rows),
+        "predictions": rows,
+    }
+    output_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    logger.info("预测结果已保存: {}", output_path)
+    return output_path
 
 
 def save_report(report: ModelEvaluation, output_path: Path) -> Path:
