@@ -22,6 +22,24 @@ from analysis.train import TrainResult, train_model_from_dataset
 DEFAULT_MODEL_NAMES = list(SUPPORTED_MODEL_NAMES)
 
 
+def _safe_filename_part(text: str) -> str:
+    safe = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in str(text or "").strip())
+    return safe.strip("_") or "unknown"
+
+
+def prediction_filename_for_records(eval_records) -> str:
+    """生成带评测记录名的预测结果文件名。"""
+    record_ids = [_safe_filename_part(getattr(record, "record_id", "")) for record in eval_records]
+    if not record_ids:
+        return "eval_predictions_unknown.json"
+    if len(record_ids) == 1:
+        return f"eval_predictions_{record_ids[0]}.json"
+    joined = "__".join(record_ids[:3])
+    if len(record_ids) > 3:
+        joined = f"{joined}__and_{len(record_ids) - 3}_more"
+    return f"eval_predictions_{len(record_ids)}records_{joined}.json"
+
+
 @dataclass
 class BenchmarkResult:
     train_data_dir: str
@@ -90,6 +108,7 @@ def run_benchmark(
         logger.info("benchmark 加载评测数据: {}", eval_data_dir)
         eval_records = load_all_records(eval_data_dir)
     evaluator = Evaluator(eval_records, registry=registry)
+    predictions_filename = prediction_filename_for_records(eval_records)
 
     def _run_one(model_name: str) -> tuple[str, TrainResult, ModelEvaluation]:
         model_dir = output_dir / model_name
@@ -105,7 +124,7 @@ def run_benchmark(
             report = evaluator.evaluate(
                 model,
                 data_dir=str(eval_data_dir.resolve()),
-                predictions_output_path=model_dir / "eval_predictions.json",
+                predictions_output_path=model_dir / predictions_filename,
             )
             save_report(report, model_dir / "eval_report.json")
             logger.info(

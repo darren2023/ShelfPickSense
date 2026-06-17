@@ -90,9 +90,9 @@ def test_benchmark_runs_multiple_models(fixture_data_dir: Path, tmp_path: Path):
     assert "macro_f1" in result.comparison[0]
     assert "negative_f1" in result.comparison[0]
     assert (output_dir / "sklearn_rf" / "eval_report.json").is_file()
-    assert (output_dir / "sklearn_rf" / "eval_predictions.json").is_file()
+    assert (output_dir / "sklearn_rf" / "eval_predictions_record_001.json").is_file()
     assert (output_dir / "sklearn_logistic" / "eval_report.json").is_file()
-    assert (output_dir / "sklearn_logistic" / "eval_predictions.json").is_file()
+    assert (output_dir / "sklearn_logistic" / "eval_predictions_record_001.json").is_file()
     assert (output_dir / "benchmark_summary.json").is_file()
 
 
