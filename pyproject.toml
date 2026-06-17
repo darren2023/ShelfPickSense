@@ -1,0 +1,15 @@
+[project]
+name = "analysis"
+version = "0.1.0"
+description = "货架取货行为分析模型"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "pandas>=2.0.0",
+    "numpy>=1.24.0",
+    "pyarrow>=12.0.0",
+    "scikit-learn>=1.9.0",
+]
+
+[[tool.uv.index]]
+url = "https://mirrors.aliyun.com/pypi/simple"
