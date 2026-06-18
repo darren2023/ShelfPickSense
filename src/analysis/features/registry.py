@@ -21,18 +21,18 @@ class FeatureRegistry:
     def extractors(self) -> list[FeatureExtractor]:
         return list(self._extractors)
 
-    def extract_frame_features(self, record: RecordData, frame: FramePersons) -> FeatureSet:
-        ctx = FeatureContext.from_record(record, frame)
+    def extract_frame_features_from_context(self, ctx: FeatureContext) -> FeatureSet:
         merged: dict[str, float] = {}
         for ext in self._extractors:
             for k, v in ext.extract_frame(ctx).items():
                 merged[f"{ext.name}.{k}"] = float(v)
-        return FeatureSet(record_id=record.record_id, frame_idx=frame.frame_idx, features=merged)
+        return FeatureSet(record_id=ctx.record.record_id, frame_idx=ctx.frame.frame_idx, features=merged)
 
-    def extract_per_box_features(
-        self, record: RecordData, frame: FramePersons
-    ) -> list[PerBoxFeatureSet]:
+    def extract_frame_features(self, record: RecordData, frame: FramePersons) -> FeatureSet:
         ctx = FeatureContext.from_record(record, frame)
+        return self.extract_frame_features_from_context(ctx)
+
+    def extract_per_box_features_from_context(self, ctx: FeatureContext) -> list[PerBoxFeatureSet]:
         per_box: dict[str, dict[str, float]] = {}
         for ext in self._extractors:
             box_feats = ext.extract_per_box(ctx)
@@ -43,13 +43,19 @@ class FeatureRegistry:
 
         return [
             PerBoxFeatureSet(
-                record_id=record.record_id,
-                frame_idx=frame.frame_idx,
+                record_id=ctx.record.record_id,
+                frame_idx=ctx.frame.frame_idx,
                 box_token=token,
                 features=feats,
             )
             for token, feats in sorted(per_box.items())
         ]
+
+    def extract_per_box_features(
+        self, record: RecordData, frame: FramePersons
+    ) -> list[PerBoxFeatureSet]:
+        ctx = FeatureContext.from_record(record, frame)
+        return self.extract_per_box_features_from_context(ctx)
 
     def frame_feature_names(self, record: RecordData) -> list[str]:
         frames = record.frames()

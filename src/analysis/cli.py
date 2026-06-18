@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 from pathlib import Path
 
 from loguru import logger
@@ -12,6 +13,7 @@ from loguru import logger
 from analysis.benchmark import DEFAULT_MODEL_NAMES, run_benchmark
 from analysis.evaluation import compare_reports, evaluate_model, save_report
 from analysis.models import SUPPORTED_MODEL_NAMES
+from analysis.realtime import RealtimePickingPredictor
 from analysis.train import train_model
 
 
@@ -127,6 +129,56 @@ def _cmd_benchmark(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_infer_frame(args: argparse.Namespace) -> int:
+    from analysis.records import load_record
+
+    record = load_record(Path(args.record_dir))
+    predictor = RealtimePickingPredictor(record_id=record.record_id)
+    predictor.load_model(Path(args.model))
+    predictor.set_infer_size(
+        args.infer_width if args.infer_width is not None else record.infer_width,
+        args.infer_height if args.infer_height is not None else record.infer_height,
+    )
+    predictor.annotation = record.annotation
+
+    frames = record.frames()
+    if args.max_frames > 0:
+        frames = frames[: args.max_frames]
+    frame_interval = 1.0 / args.fps if args.realtime and args.fps > 0 else 0.0
+    logger.info(
+        "开始模拟视频流逐帧推理: record={}, video={}, frames={}, realtime={}, fps={}",
+        record.record_id,
+        args.video or "",
+        len(frames),
+        args.realtime,
+        args.fps,
+    )
+
+    out_file = None
+    if args.output:
+        out_path = Path(args.output)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_file = out_path.open("w", encoding="utf-8")
+
+    try:
+        for frame in frames:
+            pred = predictor.predict_frame(
+                frame.persons,
+                frame_idx=frame.frame_idx,
+                timestamp_sec=frame.timestamp_sec,
+            )
+            line = json.dumps(pred.to_dict(), ensure_ascii=False)
+            if out_file:
+                out_file.write(line + "\n")
+            print(line)
+            if frame_interval > 0:
+                time.sleep(frame_interval)
+    finally:
+        if out_file:
+            out_file.close()
+    return 0
+
+
 def _add_logging_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--log-level",
@@ -187,6 +239,19 @@ def build_parser() -> argparse.ArgumentParser:
     p_bench.add_argument("--jobs", type=int, default=8, help="并行运行的模型数量（默认 8）")
     _add_logging_args(p_bench)
     p_bench.set_defaults(func=_cmd_benchmark)
+
+    p_infer = sub.add_parser("infer-frame", help="用已抽取骨架记录模拟视频流逐帧推理")
+    p_infer.add_argument("--model", required=True, help="已训练模型目录")
+    p_infer.add_argument("--record-dir", required=True, help="记录目录（读取 skeleton.parquet 和 annotation.json）")
+    p_infer.add_argument("--video", default="", help="原始视频路径，仅用于日志标识")
+    p_infer.add_argument("--infer-width", type=float, default=None, help="推理坐标宽度")
+    p_infer.add_argument("--infer-height", type=float, default=None, help="推理坐标高度")
+    p_infer.add_argument("--fps", type=float, default=25.0, help="模拟流帧率")
+    p_infer.add_argument("--max-frames", type=int, default=0, help="最多推理帧数，0 表示全部")
+    p_infer.add_argument("--realtime", action="store_true", help="按 fps sleep，模拟真实时间流")
+    p_infer.add_argument("--output", default="", help="JSONL 输出文件路径")
+    _add_logging_args(p_infer)
+    p_infer.set_defaults(func=_cmd_infer_frame)
 
     return parser
 

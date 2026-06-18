@@ -96,6 +96,32 @@ def test_benchmark_runs_multiple_models(fixture_data_dir: Path, tmp_path: Path):
     assert (output_dir / "benchmark_summary.json").is_file()
 
 
+def test_realtime_predict_frame(fixture_data_dir: Path, tmp_path: Path):
+    from analysis.realtime import RealtimePickingPredictor
+    from analysis.records import load_record
+    from analysis.train import train_model
+
+    model_dir = tmp_path / "model"
+    train_model(fixture_data_dir, model_dir)
+    record = load_record(fixture_data_dir)
+    frame = record.frames()[5]
+
+    predictor = RealtimePickingPredictor(record_id="record_001")
+    predictor.load_model(model_dir)
+    predictor.set_infer_size(record.infer_width, record.infer_height)
+    predictor.annotation = record.annotation
+    pred = predictor.predict_frame(
+        frame.persons,
+        frame_idx=frame.frame_idx,
+        timestamp_sec=frame.timestamp_sec,
+    )
+
+    assert pred.record_id == "record_001"
+    assert pred.frame_idx == frame.frame_idx
+    assert 0.0 <= pred.picking_prob <= 1.0
+    assert isinstance(pred.predicted_box_tokens, list)
+
+
 def test_picking_macro_f1_metrics():
     from analysis.evaluation import compute_picking_metrics
 
