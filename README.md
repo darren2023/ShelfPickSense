@@ -7,6 +7,7 @@
 - 从 `skeleton.parquet` 和 `annotation.json` 构建特征。
 - 从 `event_review.json` 的人工复核结果构建监督信号。
 - 支持多个 sklearn 模型训练、评测、批量 benchmark。
+- 支持将记录特征导出为 parquet 文件，便于外部分析或复用。
 - 支持 macro-F1、balanced accuracy、货框 micro-F1 等不均衡样本友好指标。
 - 支持逐帧实时推理，便于外部应用直接集成 `RealtimePickingPredictor`。
 - 特征提取模块采用注册表模式，便于新增特征。
@@ -37,6 +38,30 @@ uv run python main.py eval --data-dir data/demo --model models/rf
 
 ```bash
 uv run python main.py benchmark --data-dir data/demo --output models/benchmark --jobs 4
+```
+
+从记录提取特征并保存：
+
+```bash
+uv run python main.py export-features --data-dir data/demo --output outputs/features
+```
+
+也可以输出更便于查看的 CSV 或 JSONL：
+
+```bash
+uv run python main.py export-features --data-dir data/demo --output outputs/features --format csv
+```
+
+分析输入记录的特征相关性：
+
+```bash
+uv run python main.py analyze-features --data-dir data/demo --output outputs/correlations
+```
+
+也可以分析已导出的特征目录：
+
+```bash
+uv run python main.py analyze-features --features-dir outputs/features --output outputs/correlations
 ```
 
 模拟视频流逐帧实时推理：

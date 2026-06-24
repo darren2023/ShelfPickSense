@@ -96,6 +96,212 @@ def test_benchmark_runs_multiple_models(fixture_data_dir: Path, tmp_path: Path):
     assert (output_dir / "benchmark_summary.json").is_file()
 
 
+def test_cli_export_features(fixture_data_dir: Path, tmp_path: Path):
+    import json
+
+    import pandas as pd
+
+    from analysis.cli import main
+
+    output_dir = tmp_path / "features"
+    ret = main(
+        [
+            "export-features",
+            "--data-dir",
+            str(fixture_data_dir),
+            "--output",
+            str(output_dir),
+        ]
+    )
+
+    assert ret == 0
+    frame_path = output_dir / "frame_features.parquet"
+    box_path = output_dir / "box_features.parquet"
+    meta_path = output_dir / "features_meta.json"
+    assert frame_path.is_file()
+    assert box_path.is_file()
+    assert meta_path.is_file()
+
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    assert meta["frame_count"] == 10
+    assert meta["box_sample_count"] == 6
+    assert meta["frame_feature_names"]
+    assert meta["box_feature_names"]
+
+    frame_df = pd.read_parquet(frame_path)
+    box_df = pd.read_parquet(box_path)
+    assert len(frame_df) == 10
+    assert len(box_df) == 6
+    assert {"record_id", "frame_idx", "is_picking", "confirmed_box_tokens"} <= set(frame_df.columns)
+    assert {"record_id", "frame_idx", "box_token", "is_target"} <= set(box_df.columns)
+
+
+def test_cli_export_features_all_formats(fixture_data_dir: Path, tmp_path: Path):
+    import json
+
+    import pandas as pd
+
+    from analysis.cli import main
+
+    output_dir = tmp_path / "features_all"
+    ret = main(
+        [
+            "export-features",
+            "--data-dir",
+            str(fixture_data_dir),
+            "--output",
+            str(output_dir),
+            "--format",
+            "all",
+        ]
+    )
+
+    assert ret == 0
+    for suffix in ("parquet", "csv", "jsonl"):
+        assert (output_dir / f"frame_features.{suffix}").is_file()
+        assert (output_dir / f"box_features.{suffix}").is_file()
+
+    frame_csv = pd.read_csv(output_dir / "frame_features.csv")
+    assert len(frame_csv) == 10
+    assert "confirmed_box_tokens" in frame_csv.columns
+
+    first_jsonl = (output_dir / "frame_features.jsonl").read_text(encoding="utf-8").splitlines()[0]
+    first_row = json.loads(first_jsonl)
+    assert {"record_id", "frame_idx", "is_picking", "confirmed_box_tokens"} <= set(first_row)
+
+    meta = json.loads((output_dir / "features_meta.json").read_text(encoding="utf-8"))
+    assert meta["output_format"] == "all"
+    assert set(meta["output_files"]) == {"parquet", "csv", "jsonl"}
+
+
+def test_cli_analyze_features(fixture_data_dir: Path, tmp_path: Path):
+    import json
+
+    import pandas as pd
+
+    from analysis.cli import main
+
+    output_dir = tmp_path / "correlations"
+    ret = main(
+        [
+            "analyze-features",
+            "--data-dir",
+            str(fixture_data_dir),
+            "--output",
+            str(output_dir),
+            "--threshold",
+            "0.0",
+            "--top-n",
+            "10",
+        ]
+    )
+
+    assert ret == 0
+    expected_files = [
+        "frame_feature_samples.csv",
+        "box_feature_samples.csv",
+        "frame_feature_correlation.csv",
+        "frame_target_correlation.csv",
+        "frame_high_correlation_pairs.csv",
+        "frame_pca_explained_variance.csv",
+        "frame_pca_loadings.csv",
+        "frame_pca_projection.csv",
+        "frame_low_value_constant_features.csv",
+        "frame_low_value_low_target_correlation.csv",
+        "frame_low_value_redundant_pairs.csv",
+        "box_feature_correlation.csv",
+        "box_target_correlation.csv",
+        "box_high_correlation_pairs.csv",
+        "box_pca_explained_variance.csv",
+        "box_pca_loadings.csv",
+        "box_pca_projection.csv",
+        "box_low_value_constant_features.csv",
+        "box_low_value_low_target_correlation.csv",
+        "box_low_value_redundant_pairs.csv",
+        "correlation_report.md",
+        "correlation_summary.json",
+    ]
+    for filename in expected_files:
+        assert (output_dir / filename).is_file()
+    for filename in [
+        "frame_target_correlation_top.svg",
+        "box_target_correlation_top.svg",
+        "frame_feature_correlation_heatmap.svg",
+        "box_feature_correlation_heatmap.svg",
+        "frame_high_correlation_pairs.svg",
+        "box_high_correlation_pairs.svg",
+        "frame_pca_explained_variance.svg",
+        "box_pca_explained_variance.svg",
+        "frame_pca_scatter.svg",
+        "box_pca_scatter.svg",
+    ]:
+        assert (output_dir / "figures" / filename).is_file()
+
+    summary = json.loads((output_dir / "correlation_summary.json").read_text(encoding="utf-8"))
+    assert summary["frame_count"] == 10
+    assert summary["box_sample_count"] == 6
+    assert "frame_target_correlation" in summary["outputs"]
+    assert "box_target_correlation" in summary["outputs"]
+    assert "frame_pca_explained_variance" in summary["outputs"]
+    assert "box_pca_projection" in summary["outputs"]
+    assert "frame_low_value_constant_features" in summary["outputs"]
+    assert "box_low_value_redundant_pairs" in summary["outputs"]
+    assert "report" in summary["outputs"]
+
+    frame_target = pd.read_csv(output_dir / "frame_target_correlation.csv")
+    box_target = pd.read_csv(output_dir / "box_target_correlation.csv")
+    assert {"feature", "correlation", "abs_correlation", "non_null_count"} <= set(frame_target.columns)
+    assert {"feature", "correlation", "abs_correlation", "non_null_count"} <= set(box_target.columns)
+    report = (output_dir / "correlation_report.md").read_text(encoding="utf-8")
+    assert "![帧级特征与 is_picking 的相关性]" in report
+    assert "![货框特征与 is_target 的相关性]" in report
+    assert "主成分分析 PCA" in report
+    assert "低价值/冗余特征提示" in report
+    assert "frame_pca_scatter.svg" in report
+
+
+def test_cli_analyze_exported_features(fixture_data_dir: Path, tmp_path: Path):
+    import json
+
+    from analysis.cli import main
+
+    features_dir = tmp_path / "features"
+    export_ret = main(
+        [
+            "export-features",
+            "--data-dir",
+            str(fixture_data_dir),
+            "--output",
+            str(features_dir),
+            "--format",
+            "csv",
+        ]
+    )
+    assert export_ret == 0
+
+    output_dir = tmp_path / "correlations_from_features"
+    analyze_ret = main(
+        [
+            "analyze-features",
+            "--features-dir",
+            str(features_dir),
+            "--output",
+            str(output_dir),
+        ]
+    )
+
+    assert analyze_ret == 0
+    summary = json.loads((output_dir / "correlation_summary.json").read_text(encoding="utf-8"))
+    assert summary["input_source"] == str(features_dir)
+    assert summary["frame_count"] == 10
+    assert summary["box_sample_count"] == 6
+    assert (output_dir / "frame_target_correlation.csv").is_file()
+    assert (output_dir / "box_target_correlation.csv").is_file()
+    assert (output_dir / "frame_pca_projection.csv").is_file()
+    assert (output_dir / "box_pca_projection.csv").is_file()
+    assert (output_dir / "correlation_report.md").is_file()
+
+
 def test_realtime_predict_frame(fixture_data_dir: Path, tmp_path: Path):
     from analysis.realtime import RealtimePickingPredictor
     from analysis.records import load_record

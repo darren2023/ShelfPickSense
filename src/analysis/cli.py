@@ -82,13 +82,12 @@ def _cmd_eval(args: argparse.Namespace) -> int:
 
 
 def _cmd_compare(args: argparse.Namespace) -> int:
-    from analysis.evaluation import ModelEvaluation
+    from analysis.evaluation import BoxMetrics, ModelEvaluation, PickingMetrics
 
     logger.info("开始对比评测报告: count={}", len(args.reports))
     reports: list[ModelEvaluation] = []
     for p in args.reports:
         data = json.loads(Path(p).read_text(encoding="utf-8"))
-        from analysis.evaluation import BoxMetrics, ModelEvaluation, PickingMetrics
 
         reports.append(
             ModelEvaluation(
@@ -126,6 +125,152 @@ def _cmd_benchmark(args: argparse.Namespace) -> int:
     logger.info("benchmark 完成: models={}, output={}", len(result.model_names), result.output_dir)
     print(json.dumps(result.comparison, ensure_ascii=False, indent=2))
     print(f"\n批量对比报告已保存: {Path(args.output) / 'benchmark_summary.json'}")
+    return 0
+
+
+def _json_safe_rows(rows: list[dict]) -> list[dict]:
+    safe_rows = []
+    for row in rows:
+        safe_rows.append(
+            {
+                k: json.dumps(v, ensure_ascii=False) if isinstance(v, list | dict) else v
+                for k, v in row.items()
+            }
+        )
+    return safe_rows
+
+
+def _write_jsonl(path: Path, rows: list[dict]) -> None:
+    with path.open("w", encoding="utf-8") as f:
+        for row in rows:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
+def _cmd_export_features(args: argparse.Namespace) -> int:
+    import pandas as pd
+
+    from analysis.dataset import load_dataset
+
+    logger.info(
+        "开始提取特征: data_dir={}, output={}, format={}",
+        args.data_dir,
+        args.output,
+        args.format,
+    )
+    dataset = load_dataset(Path(args.data_dir))
+    out_dir = Path(args.output)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    frame_rows = []
+    for sample in dataset.frame_samples:
+        row = {
+            "record_id": sample.record_id,
+            "frame_idx": sample.frame_idx,
+            "is_picking": sample.is_picking,
+            "confirmed_box_tokens": sample.confirmed_box_tokens,
+        }
+        row.update(dict(zip(dataset.frame_feature_names, sample.x.tolist(), strict=True)))
+        frame_rows.append(row)
+
+    box_rows = []
+    for sample in dataset.box_samples:
+        row = {
+            "record_id": sample.record_id,
+            "frame_idx": sample.frame_idx,
+            "box_token": sample.box_token,
+            "is_target": sample.is_target,
+        }
+        row.update(dict(zip(dataset.box_feature_names, sample.x.tolist(), strict=True)))
+        box_rows.append(row)
+
+    frame_df = pd.DataFrame(frame_rows)
+    box_df = pd.DataFrame(box_rows)
+    formats = ["parquet", "csv", "jsonl"] if args.format == "all" else [args.format]
+    output_files: dict[str, dict[str, str]] = {}
+
+    for output_format in formats:
+        frame_path = out_dir / f"frame_features.{output_format}"
+        box_path = out_dir / f"box_features.{output_format}"
+        if output_format == "parquet":
+            frame_df.to_parquet(frame_path, index=False)
+            box_df.to_parquet(box_path, index=False)
+        elif output_format == "csv":
+            pd.DataFrame(_json_safe_rows(frame_rows)).to_csv(frame_path, index=False, encoding="utf-8-sig")
+            pd.DataFrame(_json_safe_rows(box_rows)).to_csv(box_path, index=False, encoding="utf-8-sig")
+        elif output_format == "jsonl":
+            _write_jsonl(frame_path, frame_rows)
+            _write_jsonl(box_path, box_rows)
+        output_files[output_format] = {
+            "frame_features_path": str(frame_path),
+            "box_features_path": str(box_path),
+        }
+
+    meta_path = out_dir / "features_meta.json"
+    primary_format = formats[0]
+
+    meta = {
+        "data_dir": str(Path(args.data_dir)),
+        "output_dir": str(out_dir),
+        "output_format": args.format,
+        "output_files": output_files,
+        "frame_features_path": output_files[primary_format]["frame_features_path"],
+        "box_features_path": output_files[primary_format]["box_features_path"],
+        "frame_count": len(dataset.frame_samples),
+        "box_sample_count": len(dataset.box_samples),
+        "frame_feature_names": dataset.frame_feature_names,
+        "box_feature_names": dataset.box_feature_names,
+    }
+    meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    logger.info(
+        "特征提取完成: frames={}, box_samples={}, output={}",
+        meta["frame_count"],
+        meta["box_sample_count"],
+        out_dir,
+    )
+    print(json.dumps(meta, ensure_ascii=False, indent=2))
+    for output_format, paths in output_files.items():
+        print(f"\n{output_format} 帧级特征已保存: {paths['frame_features_path']}")
+        print(f"{output_format} 货框特征已保存: {paths['box_features_path']}")
+    print(f"特征元数据已保存: {meta_path}")
+    return 0
+
+
+def _cmd_analyze_features(args: argparse.Namespace) -> int:
+    from analysis.feature_correlation import analyze_exported_feature_correlations, analyze_feature_correlations
+
+    logger.info(
+        "开始特征相关性分析: data_dir={}, features_dir={}, output={}, method={}, threshold={}",
+        args.data_dir or "",
+        args.features_dir or "",
+        args.output,
+        args.method,
+        args.threshold,
+    )
+    if args.features_dir:
+        result = analyze_exported_feature_correlations(
+            Path(args.features_dir),
+            Path(args.output),
+            method=args.method,
+            threshold=args.threshold,
+            top_n=args.top_n,
+        )
+    else:
+        result = analyze_feature_correlations(
+            Path(args.data_dir),
+            Path(args.output),
+            method=args.method,
+            threshold=args.threshold,
+            top_n=args.top_n,
+        )
+    logger.info(
+        "特征相关性分析完成: frames={}, box_samples={}, output={}",
+        result.frame_count,
+        result.box_sample_count,
+        result.output_dir,
+    )
+    print(json.dumps(result.to_dict(), ensure_ascii=False, indent=2))
+    print(f"\n相关性分析结果已保存: {result.output_dir}")
     return 0
 
 
@@ -239,6 +384,34 @@ def build_parser() -> argparse.ArgumentParser:
     p_bench.add_argument("--jobs", type=int, default=8, help="并行运行的模型数量（默认 8）")
     _add_logging_args(p_bench)
     p_bench.set_defaults(func=_cmd_benchmark)
+
+    p_export = sub.add_parser("export-features", help="从记录提取特征并保存到文件")
+    p_export.add_argument("--data-dir", required=True, help="数据目录（含多条记录或单条记录）")
+    p_export.add_argument("--output", required=True, help="特征输出目录")
+    p_export.add_argument(
+        "--format",
+        default="parquet",
+        choices=["parquet", "csv", "jsonl", "all"],
+        help="特征文件格式（默认 parquet；可选 csv/jsonl/all）",
+    )
+    _add_logging_args(p_export)
+    p_export.set_defaults(func=_cmd_export_features)
+
+    p_analyze = sub.add_parser("analyze-features", help="分析输入记录的特征相关性")
+    source_group = p_analyze.add_mutually_exclusive_group(required=True)
+    source_group.add_argument("--data-dir", default="", help="数据目录（含多条记录或单条记录）")
+    source_group.add_argument("--features-dir", default="", help="export-features 已导出的特征目录")
+    p_analyze.add_argument("--output", required=True, help="相关性分析输出目录")
+    p_analyze.add_argument(
+        "--method",
+        default="pearson",
+        choices=["pearson", "spearman", "kendall"],
+        help="相关性计算方法（默认 pearson）",
+    )
+    p_analyze.add_argument("--threshold", type=float, default=0.9, help="高相关特征对阈值（默认 0.9）")
+    p_analyze.add_argument("--top-n", type=int, default=100, help="最多输出高相关特征对数量（默认 100）")
+    _add_logging_args(p_analyze)
+    p_analyze.set_defaults(func=_cmd_analyze_features)
 
     p_infer = sub.add_parser("infer-frame", help="用已抽取骨架记录模拟视频流逐帧推理")
     p_infer.add_argument("--model", required=True, help="已训练模型目录")
