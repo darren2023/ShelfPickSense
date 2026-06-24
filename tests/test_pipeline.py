@@ -197,6 +197,74 @@ def test_cli_export_features(fixture_data_dir: Path, tmp_path: Path):
     assert {"record_id", "frame_idx", "box_token", "is_target"} <= set(box_df.columns)
 
 
+def test_cli_feature_config_filters_export_and_train(fixture_data_dir: Path, tmp_path: Path):
+    import json
+
+    import pandas as pd
+
+    from analysis.cli import main
+
+    config_path = tmp_path / "feature_config.json"
+    selected_frame = ["skeleton.person_count", "spatial.any_wrist_inside_box"]
+    selected_box = ["spatial.wrist_min_dist_norm", "spatial.wrist_inside"]
+    config_path.write_text(
+        json.dumps(
+            {
+                "frame_features": selected_frame,
+                "box_features": selected_box,
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    features_dir = tmp_path / "selected_features"
+    ret = main(
+        [
+            "export-features",
+            "--data-dir",
+            str(fixture_data_dir),
+            "--output",
+            str(features_dir),
+            "--format",
+            "csv",
+            "--feature-config",
+            str(config_path),
+        ]
+    )
+
+    assert ret == 0
+    meta = json.loads((features_dir / "features_meta.json").read_text(encoding="utf-8"))
+    assert meta["frame_feature_names"] == selected_frame
+    assert meta["box_feature_names"] == selected_box
+    assert meta["feature_selection"]["frame_features"] == selected_frame
+
+    frame_df = pd.read_csv(features_dir / "frame_features.csv")
+    box_df = pd.read_csv(features_dir / "box_features.csv")
+    assert set(selected_frame) <= set(frame_df.columns)
+    assert "skeleton.infer_width" not in frame_df.columns
+    assert set(selected_box) <= set(box_df.columns)
+    assert "spatial.foot_min_dist_norm" not in box_df.columns
+
+    model_dir = tmp_path / "selected_model"
+    ret = main(
+        [
+            "train",
+            "--data-dir",
+            str(fixture_data_dir),
+            "--output",
+            str(model_dir),
+            "--feature-config",
+            str(config_path),
+        ]
+    )
+
+    assert ret == 0
+    model_meta = json.loads((model_dir / "meta.json").read_text(encoding="utf-8"))
+    assert model_meta["frame_feature_names"] == selected_frame
+    assert model_meta["box_feature_names"] == selected_box
+
+
 def test_cli_export_features_all_formats(fixture_data_dir: Path, tmp_path: Path):
     import json
 

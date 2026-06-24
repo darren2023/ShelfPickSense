@@ -7,6 +7,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from analysis.features.registry import FeatureRegistry, default_registry
+from analysis.features.selection import FeatureSelection
 from analysis.records import RecordData, load_all_records
 
 
@@ -47,6 +48,7 @@ class Dataset:
 def build_dataset(
     records: list[RecordData],
     registry: FeatureRegistry | None = None,
+    feature_selection: FeatureSelection | None = None,
 ) -> Dataset:
     reg = registry or default_registry()
     frame_samples: list[FrameSample] = []
@@ -57,8 +59,12 @@ def build_dataset(
     for record in records:
         if not frame_feature_names:
             frame_feature_names = reg.frame_feature_names(record)
+            if feature_selection:
+                frame_feature_names = feature_selection.select_frame(frame_feature_names)
         if not box_feature_names:
             box_feature_names = reg.per_box_feature_names(record)
+            if feature_selection:
+                box_feature_names = feature_selection.select_box(box_feature_names)
 
         for frame in record.frames():
             label = record.labels.label_for(frame.frame_idx)
@@ -96,8 +102,8 @@ def build_dataset(
     )
 
 
-def load_dataset(data_dir) -> Dataset:
+def load_dataset(data_dir, feature_selection: FeatureSelection | None = None) -> Dataset:
     from pathlib import Path
 
     records = load_all_records(Path(data_dir))
-    return build_dataset(records)
+    return build_dataset(records, feature_selection=feature_selection)

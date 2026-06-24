@@ -86,6 +86,53 @@ uv run python main.py export-features \
 - `jsonl`：每行一个样本对象，适合流式处理或快速抽样查看。
 - `all`：同时输出 parquet、CSV 和 JSONL。
 
+### 特征选择配置
+
+如果只想使用已筛选的特征，可以准备一个 JSON 配置。仓库内提供了示例文件 `configs/selected_features.example.json`：
+
+```json
+{
+  "frame_features": [
+    "skeleton.person_count",
+    "spatial.any_wrist_inside_box"
+  ],
+  "box_features": [
+    "spatial.wrist_min_dist_norm",
+    "spatial.wrist_inside"
+  ]
+}
+```
+
+在导出、训练、benchmark 和从原始记录分析特征时传入：
+
+```bash
+uv run python main.py train \
+  --data-dir data/demo \
+  --output models/selected \
+  --model sklearn_rf \
+  --feature-config configs/selected_features.json
+```
+
+```bash
+uv run python main.py export-features \
+  --data-dir data/demo \
+  --output outputs/features_selected \
+  --format csv \
+  --feature-config configs/selected_features.json
+```
+
+也可以用于 `benchmark` 和 `analyze-features`：
+
+```bash
+uv run python main.py benchmark \
+  --data-dir data/split/Train \
+  --eval-data-dir data/split/Test \
+  --output models/benchmark_selected \
+  --feature-config configs/selected_features.json
+```
+
+配置中某一类不写时，该类会保留全部特征；写了未知特征名会直接报错，避免静默使用错误配置。
+
 ## 特征相关性分析
 
 分析输入目录中所有记录的帧级特征和货框级特征：

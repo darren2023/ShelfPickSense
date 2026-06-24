@@ -1,0 +1,12 @@
+{
+  "frame_features": [
+    "skeleton.person_count",
+    "spatial.any_wrist_inside_box",
+    "temporal.consecutive_hit_3"
+  ],
+  "box_features": [
+    "spatial.wrist_min_dist_norm",
+    "spatial.wrist_inside",
+    "spatial.left_wrist_inside"
+  ]
+}

@@ -11,6 +11,7 @@ from loguru import logger
 
 from analysis.dataset import Dataset, build_dataset
 from analysis.features.registry import FeatureRegistry, default_registry
+from analysis.features.selection import FeatureSelection
 from analysis.models import SklearnPickingModel, create_model
 from analysis.records import RecordData, load_all_records
 
@@ -36,6 +37,7 @@ def train_model(
     *,
     model_name: str = "sklearn_rf",
     registry: FeatureRegistry | None = None,
+    feature_selection: FeatureSelection | None = None,
 ) -> TrainResult:
     data_dir = Path(data_dir)
     output_dir = Path(output_dir)
@@ -44,7 +46,7 @@ def train_model(
     logger.info("训练记录加载完成: records={}", len(records))
     reg = registry or default_registry()
     logger.debug("开始构建训练样本")
-    dataset = build_dataset(records, reg)
+    dataset = build_dataset(records, reg, feature_selection=feature_selection)
     logger.info(
         "训练样本构建完成: frames={}, positive_frames={}, box_samples={}",
         dataset.frame_count,

@@ -14,6 +14,7 @@ from loguru import logger
 from analysis.dataset import build_dataset
 from analysis.evaluation import Evaluator, ModelEvaluation, compare_reports, save_report
 from analysis.features.registry import default_registry
+from analysis.features.selection import FeatureSelection
 from analysis.models import SUPPORTED_MODEL_NAMES
 from analysis.records import load_all_records
 from analysis.train import TrainResult, train_model_from_dataset
@@ -71,6 +72,7 @@ def run_benchmark(
     model_names: list[str] | None = None,
     eval_data_dir: Path | None = None,
     jobs: int = 1,
+    feature_selection: FeatureSelection | None = None,
 ) -> BenchmarkResult:
     """批量训练多个模型，并在同一评测集上生成对比结果。"""
     train_data_dir = Path(train_data_dir)
@@ -92,7 +94,7 @@ def run_benchmark(
     logger.info("benchmark 加载训练数据: {}", train_data_dir)
     train_records = load_all_records(train_data_dir)
     logger.info("benchmark 构建训练数据集")
-    train_dataset = build_dataset(train_records, registry)
+    train_dataset = build_dataset(train_records, registry, feature_selection=feature_selection)
     logger.info(
         "benchmark 训练数据集就绪: records={}, frames={}, positive_frames={}, box_samples={}",
         len(train_records),

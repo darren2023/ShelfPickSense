@@ -13,6 +13,7 @@ from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
 
 from analysis.dataset import Dataset, load_dataset
+from analysis.features.selection import FeatureSelection
 
 
 @dataclass
@@ -1122,10 +1123,11 @@ def analyze_feature_correlations(
     method: str = "pearson",
     threshold: float = 0.9,
     top_n: int = 100,
+    feature_selection: FeatureSelection | None = None,
 ) -> CorrelationAnalysisResult:
     """从原始记录目录提取特征并分析相关性。"""
     data_dir = Path(data_dir)
-    dataset = load_dataset(data_dir)
+    dataset = load_dataset(data_dir, feature_selection=feature_selection)
     return _analyze_feature_dataframes(
         input_source=str(data_dir),
         frame_df=_frame_dataframe(dataset),
@@ -1146,6 +1148,7 @@ def analyze_exported_feature_correlations(
     method: str = "pearson",
     threshold: float = 0.9,
     top_n: int = 100,
+    feature_selection: FeatureSelection | None = None,
 ) -> CorrelationAnalysisResult:
     """从 export-features 已导出的特征目录分析相关性。"""
     features_dir = Path(features_dir)
@@ -1162,6 +1165,9 @@ def analyze_exported_feature_correlations(
             box_df,
             {"record_id", "frame_idx", "box_token", "is_target"},
         )
+    if feature_selection:
+        frame_feature_names = feature_selection.select_frame(frame_feature_names)
+        box_feature_names = feature_selection.select_box(box_feature_names)
     return _analyze_feature_dataframes(
         input_source=str(features_dir),
         frame_df=frame_df,

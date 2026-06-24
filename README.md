@@ -58,6 +58,12 @@ uv run python main.py export-features --data-dir data/demo --output outputs/feat
 uv run python main.py export-features --data-dir data/demo --output outputs/features --format csv
 ```
 
+导出、训练、benchmark 和特征分析都支持通过 JSON 配置只使用已选择的特征：
+
+```bash
+uv run python main.py train --data-dir data/demo --output models/selected --feature-config configs/selected_features.json
+```
+
 分析输入记录的特征相关性：
 
 ```bash

@@ -12,6 +12,7 @@ from loguru import logger
 
 from analysis.benchmark import DEFAULT_MODEL_NAMES, run_benchmark
 from analysis.evaluation import compare_reports, evaluate_model, save_report
+from analysis.features.selection import load_feature_selection
 from analysis.models import SUPPORTED_MODEL_NAMES
 from analysis.realtime import RealtimePickingPredictor
 from analysis.train import train_model
@@ -39,11 +40,18 @@ def configure_logging(args: argparse.Namespace) -> None:
 
 
 def _cmd_train(args: argparse.Namespace) -> int:
-    logger.info("开始训练模型: model={}, data_dir={}, output={}", args.model, args.data_dir, args.output)
+    logger.info(
+        "开始训练模型: model={}, data_dir={}, output={}, feature_config={}",
+        args.model,
+        args.data_dir,
+        args.output,
+        args.feature_config or "",
+    )
     result = train_model(
         Path(args.data_dir),
         Path(args.output),
         model_name=args.model,
+        feature_selection=load_feature_selection(args.feature_config),
     )
     logger.info(
         "训练完成: model={}, frames={}, positive_frames={}, box_samples={}",
@@ -121,6 +129,7 @@ def _cmd_benchmark(args: argparse.Namespace) -> int:
         output_dir=Path(args.output),
         model_names=args.models,
         jobs=args.jobs,
+        feature_selection=load_feature_selection(args.feature_config),
     )
     logger.info("benchmark 完成: models={}, output={}", len(result.model_names), result.output_dir)
     print(json.dumps(result.comparison, ensure_ascii=False, indent=2))
@@ -152,12 +161,14 @@ def _cmd_export_features(args: argparse.Namespace) -> int:
     from analysis.dataset import load_dataset
 
     logger.info(
-        "开始提取特征: data_dir={}, output={}, format={}",
+        "开始提取特征: data_dir={}, output={}, format={}, feature_config={}",
         args.data_dir,
         args.output,
         args.format,
+        args.feature_config or "",
     )
-    dataset = load_dataset(Path(args.data_dir))
+    feature_selection = load_feature_selection(args.feature_config)
+    dataset = load_dataset(Path(args.data_dir), feature_selection=feature_selection)
     out_dir = Path(args.output)
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -219,6 +230,7 @@ def _cmd_export_features(args: argparse.Namespace) -> int:
         "box_sample_count": len(dataset.box_samples),
         "frame_feature_names": dataset.frame_feature_names,
         "box_feature_names": dataset.box_feature_names,
+        "feature_selection": feature_selection.to_dict() if feature_selection else None,
     }
     meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -240,13 +252,15 @@ def _cmd_analyze_features(args: argparse.Namespace) -> int:
     from analysis.feature_correlation import analyze_exported_feature_correlations, analyze_feature_correlations
 
     logger.info(
-        "开始特征相关性分析: data_dir={}, features_dir={}, output={}, method={}, threshold={}",
+        "开始特征相关性分析: data_dir={}, features_dir={}, output={}, method={}, threshold={}, feature_config={}",
         args.data_dir or "",
         args.features_dir or "",
         args.output,
         args.method,
         args.threshold,
+        args.feature_config or "",
     )
+    feature_selection = load_feature_selection(args.feature_config)
     if args.features_dir:
         result = analyze_exported_feature_correlations(
             Path(args.features_dir),
@@ -254,6 +268,7 @@ def _cmd_analyze_features(args: argparse.Namespace) -> int:
             method=args.method,
             threshold=args.threshold,
             top_n=args.top_n,
+            feature_selection=feature_selection,
         )
     else:
         result = analyze_feature_correlations(
@@ -262,6 +277,7 @@ def _cmd_analyze_features(args: argparse.Namespace) -> int:
             method=args.method,
             threshold=args.threshold,
             top_n=args.top_n,
+            feature_selection=feature_selection,
         )
     logger.info(
         "特征相关性分析完成: frames={}, box_samples={}, output={}",
@@ -350,6 +366,7 @@ def build_parser() -> argparse.ArgumentParser:
         choices=SUPPORTED_MODEL_NAMES,
         help="模型类型",
     )
+    p_train.add_argument("--feature-config", default="", help="特征选择 JSON 配置路径（默认使用全部特征）")
     _add_logging_args(p_train)
     p_train.set_defaults(func=_cmd_train)
 
@@ -382,6 +399,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="需要批量运行的模型列表",
     )
     p_bench.add_argument("--jobs", type=int, default=8, help="并行运行的模型数量（默认 8）")
+    p_bench.add_argument("--feature-config", default="", help="特征选择 JSON 配置路径（默认使用全部特征）")
     _add_logging_args(p_bench)
     p_bench.set_defaults(func=_cmd_benchmark)
 
@@ -394,6 +412,7 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["parquet", "csv", "jsonl", "all"],
         help="特征文件格式（默认 parquet；可选 csv/jsonl/all）",
     )
+    p_export.add_argument("--feature-config", default="", help="特征选择 JSON 配置路径（默认导出全部特征）")
     _add_logging_args(p_export)
     p_export.set_defaults(func=_cmd_export_features)
 
@@ -410,6 +429,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_analyze.add_argument("--threshold", type=float, default=0.9, help="高相关特征对阈值（默认 0.9）")
     p_analyze.add_argument("--top-n", type=int, default=100, help="最多输出高相关特征对数量（默认 100）")
+    p_analyze.add_argument("--feature-config", default="", help="特征选择 JSON 配置路径（默认分析全部特征）")
     _add_logging_args(p_analyze)
     p_analyze.set_defaults(func=_cmd_analyze_features)
 
