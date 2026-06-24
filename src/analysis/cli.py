@@ -12,7 +12,7 @@ from loguru import logger
 
 from analysis.benchmark import DEFAULT_MODEL_NAMES, run_benchmark
 from analysis.evaluation import compare_reports, evaluate_model, save_report
-from analysis.feature_benchmark import load_feature_benchmark_plan, run_feature_benchmarks
+from analysis.feature_benchmark import load_feature_benchmark_plan, regenerate_feature_benchmark_report, run_feature_benchmarks
 from analysis.features.selection import load_feature_selection
 from analysis.models import SUPPORTED_MODEL_NAMES
 from analysis.realtime import RealtimePickingPredictor
@@ -151,17 +151,27 @@ def _cmd_benchmark_features(args: argparse.Namespace) -> int:
     if args.jobs:
         plan.jobs = int(args.jobs)
 
-    logger.info(
-        "开始多特征 benchmark: sets={}, models={}, jobs={}, train_data={}, eval_data={}, output={}",
-        len(plan.sets),
-        plan.model_names,
-        plan.jobs,
-        plan.train_data_dir,
-        plan.eval_data_dir or plan.train_data_dir,
-        plan.output_dir,
-    )
-    result = run_feature_benchmarks(plan)
-    logger.info("多特征 benchmark 完成: sets={}, output={}", len(result.sets), result.output_dir)
+    if args.report_only:
+        logger.info(
+            "重新生成多特征 benchmark 报告: sets={}, output={}",
+            len(plan.sets),
+            plan.output_dir,
+        )
+        result = regenerate_feature_benchmark_report(plan)
+        logger.info("多特征 benchmark 报告已重新生成: {}", result.report_path)
+    else:
+        logger.info(
+            "开始多特征 benchmark: sets={}, models={}, jobs={}, train_data={}, eval_data={}, output={}",
+            len(plan.sets),
+            plan.model_names,
+            plan.jobs,
+            plan.train_data_dir,
+            plan.eval_data_dir or plan.train_data_dir,
+            plan.output_dir,
+        )
+        result = run_feature_benchmarks(plan)
+        logger.info("多特征 benchmark 完成: sets={}, output={}", len(result.sets), result.output_dir)
+
     summary = [
         {
             "name": item.name,
@@ -456,6 +466,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="覆盖配置中的模型列表",
     )
     p_bench_features.add_argument("--jobs", type=int, default=0, help="覆盖配置中的并行模型数")
+    p_bench_features.add_argument(
+        "--report-only",
+        action="store_true",
+        help="仅基于已有 benchmark 结果重新生成 Markdown 报告，不重新训练或评测模型",
+    )
     _add_logging_args(p_bench_features)
     p_bench_features.set_defaults(func=_cmd_benchmark_features)
 

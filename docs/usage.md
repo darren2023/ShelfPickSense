@@ -388,6 +388,17 @@ uv run python main.py benchmark-features \
   --jobs 2
 ```
 
+若 benchmark 已经跑完，只想基于已有结果重新生成 Markdown 报告（不重新训练或评测）：
+
+```bash
+uv run python main.py benchmark-features \
+  --plan configs/feature_benchmark.example.json \
+  --output models/benchmark \
+  --report-only
+```
+
+`--report-only` 会优先读取输出目录下的 `feature_benchmark_summary.json`；若不存在，则回退读取各特征配置子目录中的 `benchmark_summary.json`。
+
 `feature_config` 既可以是相对项目根目录的路径（如 `configs/selected_features.example.json`），也可以是相对 plan 文件所在目录的路径（如 `selected_features.example.json`）。
 
 输出：

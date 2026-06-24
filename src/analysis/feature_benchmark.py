@@ -15,8 +15,10 @@ from analysis.benchmark import (
     BenchmarkResult,
     _comparison_markdown_table,
     _fmt,
+    _write_benchmark_report,
     run_benchmark,
 )
+from analysis.train import TrainResult
 from analysis.features.selection import FeatureSelection, load_feature_selection
 from analysis.models import SUPPORTED_MODEL_NAMES
 
@@ -329,6 +331,108 @@ def _write_batch_report(batch: FeatureBenchmarkBatchResult, output_dir: Path) ->
         )
     report_path.write_text("\n".join(lines), encoding="utf-8")
     return report_path
+
+
+def _benchmark_result_from_dict(data: dict[str, Any]) -> BenchmarkResult:
+    train_results = [TrainResult(**item) for item in data.get("train_results") or []]
+    return BenchmarkResult(
+        train_data_dir=str(data.get("train_data_dir") or ""),
+        eval_data_dir=str(data.get("eval_data_dir") or ""),
+        output_dir=str(data.get("output_dir") or ""),
+        model_names=list(data.get("model_names") or []),
+        train_results=train_results,
+        reports=[],
+        comparison=list(data.get("comparison") or []),
+        benchmarked_at=str(data.get("benchmarked_at") or ""),
+    )
+
+
+def _set_result_from_dict(data: dict[str, Any]) -> FeatureBenchmarkSetResult:
+    benchmark = _benchmark_result_from_dict(data["benchmark"])
+    best_model, best_macro_f1 = _best_from_benchmark(benchmark)
+    return FeatureBenchmarkSetResult(
+        name=str(data["name"]),
+        output_dir=str(data["output_dir"]),
+        feature_selection=data.get("feature_selection"),
+        best_model=str(data.get("best_model") or best_model),
+        best_macro_f1=float(data.get("best_macro_f1") or best_macro_f1),
+        benchmark=benchmark,
+    )
+
+
+def load_feature_benchmark_batch_result(output_dir: Path) -> FeatureBenchmarkBatchResult:
+    summary_path = Path(output_dir) / "feature_benchmark_summary.json"
+    if not summary_path.is_file():
+        raise FileNotFoundError(f"未找到汇总结果: {summary_path}")
+    data = json.loads(summary_path.read_text(encoding="utf-8"))
+    sets = [_set_result_from_dict(item) for item in data.get("sets") or []]
+    if not sets:
+        raise ValueError(f"汇总结果为空: {summary_path}")
+    return FeatureBenchmarkBatchResult(
+        train_data_dir=str(data.get("train_data_dir") or ""),
+        eval_data_dir=str(data.get("eval_data_dir") or ""),
+        output_dir=str(Path(output_dir).resolve()),
+        model_names=list(data.get("model_names") or []),
+        sets=sets,
+        benchmarked_at=str(data.get("benchmarked_at") or ""),
+        report_path=str(data.get("report_path") or ""),
+        summary_path=str(summary_path.resolve()),
+    )
+
+
+def _load_batch_result_from_plan(plan: FeatureBenchmarkPlan) -> FeatureBenchmarkBatchResult:
+    output_dir = Path(plan.output_dir)
+    base_dir = Path(plan.source_path).parent if plan.source_path else Path.cwd()
+    eval_data_dir = plan.eval_data_dir or plan.train_data_dir
+    set_results: list[FeatureBenchmarkSetResult] = []
+    for spec in plan.sets:
+        set_output = output_dir / _safe_dir_name(spec.name)
+        summary_path = set_output / "benchmark_summary.json"
+        if not summary_path.is_file():
+            raise FileNotFoundError(f"未找到特征配置 benchmark 结果: {summary_path}")
+        benchmark = _benchmark_result_from_dict(json.loads(summary_path.read_text(encoding="utf-8")))
+        feature_selection = resolve_feature_selection(spec, base_dir=base_dir)
+        best_model, best_macro_f1 = _best_from_benchmark(benchmark)
+        set_results.append(
+            FeatureBenchmarkSetResult(
+                name=spec.name,
+                output_dir=str(set_output.resolve()),
+                feature_selection=feature_selection.to_dict() if feature_selection else None,
+                best_model=best_model,
+                best_macro_f1=best_macro_f1,
+                benchmark=benchmark,
+            )
+        )
+    return FeatureBenchmarkBatchResult(
+        train_data_dir=str(plan.train_data_dir.resolve()),
+        eval_data_dir=str(eval_data_dir.resolve()),
+        output_dir=str(output_dir.resolve()),
+        model_names=list(plan.model_names),
+        sets=set_results,
+        benchmarked_at=datetime.now(timezone.utc).isoformat(),
+        report_path="",
+        summary_path=str((output_dir / "feature_benchmark_summary.json").resolve()),
+    )
+
+
+def regenerate_feature_benchmark_report(plan: FeatureBenchmarkPlan) -> FeatureBenchmarkBatchResult:
+    """基于已有 benchmark 结果重新生成 Markdown 报告，不重新训练或评测模型。"""
+    output_dir = Path(plan.output_dir)
+    summary_path = output_dir / "feature_benchmark_summary.json"
+    if summary_path.is_file():
+        batch = load_feature_benchmark_batch_result(output_dir)
+    else:
+        logger.info("未找到 feature_benchmark_summary.json，改为从各特征配置目录加载 benchmark_summary.json")
+        batch = _load_batch_result_from_plan(plan)
+
+    for item in batch.sets:
+        _write_benchmark_report(item.benchmark, Path(item.output_dir))
+    report_path = _write_batch_report(batch, output_dir)
+    batch.report_path = str(report_path.resolve())
+    batch.summary_path = str(summary_path.resolve())
+    summary_path.write_text(json.dumps(batch.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+    logger.info("多特征 benchmark 报告已重新生成: {}", report_path)
+    return batch
 
 
 def run_feature_benchmarks(plan: FeatureBenchmarkPlan) -> FeatureBenchmarkBatchResult:

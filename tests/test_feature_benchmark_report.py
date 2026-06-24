@@ -86,3 +86,41 @@ def test_write_batch_report_includes_per_feature_model_tables(tmp_path: Path):
     assert "**本组推荐**：`sklearn_rf`" in report
     assert "### 各特征配置最佳模型" in report
     assert "### 全局推荐" in report
+
+
+def test_regenerate_feature_benchmark_report_from_existing_summary(tmp_path: Path):
+    import json
+
+    from analysis.cli import main
+    from fixtures import make_fixture_record
+
+    train_dir = make_fixture_record(tmp_path / "Train" / "train_record")
+    test_dir = make_fixture_record(tmp_path / "Test" / "test_record")
+    output_dir = tmp_path / "feature_benchmark"
+    plan_path = tmp_path / "plan.json"
+    plan_path.write_text(
+        json.dumps(
+            {
+                "train_data_dir": str(train_dir),
+                "eval_data_dir": str(test_dir),
+                "output_dir": str(output_dir),
+                "models": ["sklearn_rf"],
+                "jobs": 1,
+                "feature_sets": [{"name": "all_features"}],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    assert main(["benchmark-features", "--plan", str(plan_path)]) == 0
+    report_path = output_dir / "feature_benchmark_report.md"
+    original = report_path.read_text(encoding="utf-8")
+    report_path.write_text("# placeholder", encoding="utf-8")
+
+    assert main(["benchmark-features", "--plan", str(plan_path), "--report-only"]) == 0
+    regenerated = report_path.read_text(encoding="utf-8")
+    assert regenerated != "# placeholder"
+    assert "多特征配置 Benchmark 对比报告" in regenerated
+    assert "各特征配置模型明细" in regenerated
+    assert len(regenerated) >= len(original)
