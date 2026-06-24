@@ -20,19 +20,36 @@ class FeatureContext:
     frame: FramePersons
     box_index: dict[str, BoxInfo]
     box_tokens: list[str]
+    frame_index: dict[int, FramePersons] = field(default_factory=dict)
+
+    def prior_frame(self, offset: int) -> FramePersons | None:
+        """按帧序号偏移取历史帧。offset=0 为当前帧，offset=1 为上一帧。"""
+        if offset < 0:
+            return None
+        if offset == 0:
+            return self.frame
+        return self.frame_index.get(self.frame.frame_idx - offset)
 
     @classmethod
-    def from_record(cls, record: RecordData, frame: FramePersons) -> FeatureContext:
+    def from_record(
+        cls,
+        record: RecordData,
+        frame: FramePersons,
+        *,
+        frame_index: dict[int, FramePersons] | None = None,
+    ) -> FeatureContext:
         box_index = build_box_index(
             record.annotation,
             infer_w=record.infer_width,
             infer_h=record.infer_height,
         )
+        idx = frame_index if frame_index is not None else record.frame_index()
         return cls(
             record=record,
             frame=frame,
             box_index=box_index,
             box_tokens=sorted(box_index.keys()),
+            frame_index=idx,
         )
 
 

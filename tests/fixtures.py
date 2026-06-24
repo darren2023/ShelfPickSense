@@ -42,13 +42,13 @@ def make_fixture_record(output_dir: Path) -> Path:
     rows: list[dict] = []
     # 帧 1-5：无取货，手腕远离货框
     for fi in range(1, 6):
-        rows.append(_skeleton_row(fi, left_wrist=(50, 50), right_wrist=(80, 50)))
-    # 帧 6-8：取货 A1，手腕在 A1 内
+        rows.append(_skeleton_row(fi, left_wrist=(10, 10), right_wrist=(15, 12)))
+    # 帧 6-8：取货 A1，手腕落在 infer 缩放后的 A1 多边形内
     for fi in range(6, 9):
-        rows.append(_skeleton_row(fi, left_wrist=(150, 150), right_wrist=(160, 155)))
+        rows.append(_skeleton_row(fi, left_wrist=(50, 45), right_wrist=(55, 48)))
     # 帧 9-10：取货 A2
     for fi in range(9, 11):
-        rows.append(_skeleton_row(fi, left_wrist=(350, 150), right_wrist=(360, 155)))
+        rows.append(_skeleton_row(fi, left_wrist=(130, 45), right_wrist=(140, 48)))
 
     pd.DataFrame(rows).to_parquet(output_dir / "skeleton.parquet", index=False)
 

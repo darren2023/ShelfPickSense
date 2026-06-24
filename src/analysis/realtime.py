@@ -78,6 +78,7 @@ class RealtimePickingPredictor:
         self.infer_height = float(infer_height or 0.0)
         self.box_index: dict[str, BoxInfo] = {}
         self.box_tokens: list[str] = []
+        self._frame_history: dict[int, FramePersons] = {}
         self.record = self._make_record(record_id)
 
         if model_dir is not None:
@@ -177,11 +178,13 @@ class RealtimePickingPredictor:
             frame_idx=frame_idx,
             timestamp_sec=timestamp_sec,
         )
+        self._remember_frame(frame_data)
         ctx = FeatureContext(
             record=self.record,
             frame=frame_data,
             box_index=self.box_index,
             box_tokens=self.box_tokens,
+            frame_index=self._frame_history,
         )
         frame_features = self.registry.extract_frame_features_from_context(ctx)
         x = frame_features.to_vector(self.model.frame_feature_names)
@@ -204,6 +207,11 @@ class RealtimePickingPredictor:
             picking_prob=pred.picking_prob,
             predicted_box_tokens=predicted_box_tokens,
         )
+
+    def _remember_frame(self, frame: FramePersons, *, keep_back: int = 7) -> None:
+        self._frame_history[frame.frame_idx] = frame
+        min_idx = frame.frame_idx - keep_back
+        self._frame_history = {idx: fr for idx, fr in self._frame_history.items() if idx >= min_idx}
 
     def _make_record(self, record_id: str) -> RecordData:
         return RecordData(

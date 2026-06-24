@@ -5,6 +5,7 @@ from __future__ import annotations
 from analysis.features.base import FeatureContext, FeatureExtractor, FeatureSet, PerBoxFeatureSet
 from analysis.features.skeleton import SkeletonFeatureExtractor
 from analysis.features.spatial import BoxSpatialFeatureExtractor
+from analysis.features.temporal import TemporalFeatureExtractor
 from analysis.records import FramePersons, RecordData
 
 
@@ -78,4 +79,5 @@ def default_registry() -> FeatureRegistry:
     reg = FeatureRegistry()
     reg.register(SkeletonFeatureExtractor())
     reg.register(BoxSpatialFeatureExtractor())
+    reg.register(TemporalFeatureExtractor())
     return reg

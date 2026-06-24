@@ -31,17 +31,25 @@ class RecordData:
     infer_width: float
     infer_height: float
     box_tokens: list[str]
+    _frames_cache: list[FramePersons] | None = field(default=None, repr=False, compare=False)
 
     def frames(self) -> list[FramePersons]:
+        if self._frames_cache is not None:
+            return self._frames_cache
         if self.skeleton.empty:
-            return []
+            self._frames_cache = []
+            return self._frames_cache
         grouped: list[FramePersons] = []
         for frame_idx, group in self.skeleton.groupby("frame_idx", sort=True):
             fi = int(frame_idx)
             ts = float(group["timestamp_sec"].iloc[0]) if "timestamp_sec" in group.columns else 0.0
             persons = [_row_to_person(row) for _, row in group.iterrows()]
             grouped.append(FramePersons(frame_idx=fi, timestamp_sec=ts, persons=persons))
+        self._frames_cache = grouped
         return grouped
+
+    def frame_index(self) -> dict[int, FramePersons]:
+        return {frame.frame_idx: frame for frame in self.frames()}
 
 
 def _row_to_person(row: pd.Series) -> dict[str, Any]:
