@@ -204,6 +204,12 @@ def test_cli_benchmark_features_runs_multiple_feature_sets(tmp_path: Path):
     assert {item["name"] for item in summary["sets"]} == {"all_features", "selected"}
     report = (output_dir / "feature_benchmark_report.md").read_text(encoding="utf-8")
     assert "多特征配置 Benchmark 对比报告" in report
+    assert "各特征配置最佳模型汇总" in report
+    assert "各特征配置模型明细" in report
+    assert "各特征配置最佳模型" in report
+    assert "全局推荐" in report
+    assert "Macro-F1" in report
+    assert "sklearn_rf" in report
     assert "all_features" in report
     assert "selected" in report
 

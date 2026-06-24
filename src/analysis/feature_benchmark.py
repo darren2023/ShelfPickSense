@@ -10,7 +10,13 @@ from typing import Any
 
 from loguru import logger
 
-from analysis.benchmark import DEFAULT_MODEL_NAMES, BenchmarkResult, _fmt, run_benchmark
+from analysis.benchmark import (
+    DEFAULT_MODEL_NAMES,
+    BenchmarkResult,
+    _comparison_markdown_table,
+    _fmt,
+    run_benchmark,
+)
 from analysis.features.selection import FeatureSelection, load_feature_selection
 from analysis.models import SUPPORTED_MODEL_NAMES
 
@@ -179,6 +185,79 @@ def _best_from_benchmark(result: BenchmarkResult) -> tuple[str, float]:
     return str(best.get("model_name") or ""), float(best.get("macro_f1") or 0.0)
 
 
+def _feature_names_block(selection: dict[str, Any] | None) -> list[str]:
+    if not selection:
+        return ["- 帧级特征：全部", "- 货框特征：全部"]
+    frame_names = selection.get("frame_features")
+    box_names = selection.get("box_features")
+    lines = []
+    if frame_names is None:
+        lines.append("- 帧级特征：全部")
+    else:
+        lines.append(f"- 帧级特征（{len(frame_names)}）：`{', '.join(frame_names)}`")
+    if box_names is None:
+        lines.append("- 货框特征：全部")
+    else:
+        lines.append(f"- 货框特征（{len(box_names)}）：`{', '.join(box_names)}`")
+    if selection.get("source_path"):
+        lines.append(f"- 特征配置文件：`{selection['source_path']}`")
+    return lines
+
+
+def _best_model_summary_row(item: FeatureBenchmarkSetResult) -> dict[str, Any]:
+    if not item.benchmark.comparison:
+        return {}
+    for row in item.benchmark.comparison:
+        if row.get("model_name") == item.best_model:
+            return row
+    return item.benchmark.comparison[0]
+
+
+def _best_model_bullet(item: FeatureBenchmarkSetResult) -> str:
+    row = _best_model_summary_row(item)
+    if not row:
+        return f"- **{item.name}**：无可用模型结果。"
+    return (
+        f"- **{item.name}**：推荐 `{item.best_model}`，"
+        f"Macro-F1={_fmt(row.get('macro_f1'))}，"
+        f"Balanced Acc={_fmt(row.get('balanced_accuracy'))}，"
+        f"取货 F1={_fmt(row.get('picking_f1'))}，"
+        f"取货 Recall={_fmt(row.get('picking_recall'))}，"
+        f"货框 Micro-F1={_fmt(row.get('box_micro_f1'))}。"
+    )
+
+
+def _best_models_summary_table(batch: FeatureBenchmarkBatchResult) -> str:
+    columns = [
+        ("name", "特征配置"),
+        ("best_model", "最佳模型"),
+        ("macro_f1", "Macro-F1"),
+        ("balanced_accuracy", "Balanced Acc"),
+        ("picking_f1", "取货 F1"),
+        ("picking_recall", "取货 Recall"),
+        ("picking_precision", "取货 Precision"),
+        ("box_micro_f1", "货框 Micro-F1"),
+        ("box_exact_match", "货框精确匹配"),
+    ]
+    lines = [
+        "| " + " | ".join(label for _, label in columns) + " |",
+        "| " + " | ".join(["---"] * len(columns)) + " |",
+    ]
+    ranked = sorted(batch.sets, key=lambda item: item.best_macro_f1, reverse=True)
+    for item in ranked:
+        row = _best_model_summary_row(item)
+        values = []
+        for key, _ in columns:
+            if key == "name":
+                values.append(item.name)
+            elif key == "best_model":
+                values.append(item.best_model or "-")
+            else:
+                values.append(_fmt(row.get(key)))
+        lines.append("| " + " | ".join(values) + " |")
+    return "\n".join(lines) + "\n"
+
+
 def _write_batch_report(batch: FeatureBenchmarkBatchResult, output_dir: Path) -> Path:
     report_path = output_dir / "feature_benchmark_report.md"
     lines = [
@@ -192,44 +271,57 @@ def _write_batch_report(batch: FeatureBenchmarkBatchResult, output_dir: Path) ->
         f"- 参与模型：`{', '.join(batch.model_names)}`",
         f"- 特征配置组数：`{len(batch.sets)}`",
         "",
-        "## 各特征配置最佳模型",
+        "## 各特征配置最佳模型汇总",
         "",
-        "| 特征配置 | 最佳模型 | Macro-F1 | 帧级特征数 | 货框特征数 | 输出目录 |",
-        "| --- | --- | --- | --- | --- | --- |",
+        _best_models_summary_table(batch),
+        "",
+        "## 各特征配置模型明细",
+        "",
     ]
+
     for item in batch.sets:
-        selection = item.feature_selection or {}
-        frame_count = len(selection.get("frame_features") or [])
-        box_count = len(selection.get("box_features") or [])
-        if selection.get("frame_features") is None:
-            frame_count = "全部"
-        if selection.get("box_features") is None:
-            box_count = "全部"
-        lines.append(
-            "| "
-            + " | ".join(
-                [
-                    item.name,
-                    item.best_model or "-",
-                    _fmt(item.best_macro_f1),
-                    str(frame_count),
-                    str(box_count),
-                    f"`{item.output_dir}`",
-                ]
+        selection = item.feature_selection
+        lines.extend([f"### {item.name}", ""])
+        lines.extend(_feature_names_block(selection))
+        lines.append(f"- 输出目录：`{item.output_dir}`")
+        lines.append("")
+        lines.append(_comparison_markdown_table(item.benchmark.comparison).rstrip())
+        lines.append("")
+        row = _best_model_summary_row(item)
+        if row:
+            lines.append(
+                f"**本组推荐**：`{item.best_model}`（Macro-F1={_fmt(row.get('macro_f1'))}，"
+                f"Balanced Acc={_fmt(row.get('balanced_accuracy'))}，"
+                f"取货 Recall={_fmt(row.get('picking_recall'))}，"
+                f"货框 Micro-F1={_fmt(row.get('box_micro_f1'))}）"
             )
-            + " |"
-        )
+        else:
+            lines.append("**本组推荐**：无可用模型结果。")
+        lines.extend(["", "---", ""])
 
     if batch.sets:
         best_item = max(batch.sets, key=lambda item: item.best_macro_f1)
+        best_row = _best_model_summary_row(best_item)
+        lines.extend(
+            [
+                "## 结论",
+                "",
+                "### 各特征配置最佳模型",
+                "",
+            ]
+        )
+        lines.extend(_best_model_bullet(item) for item in batch.sets)
         lines.extend(
             [
                 "",
-                "## 结论",
+                "### 全局推荐",
                 "",
                 (
-                    f"在当前对比中，特征配置 `{best_item.name}` 下的最佳模型为 `{best_item.best_model}`，"
-                    f"Macro-F1 为 {_fmt(best_item.best_macro_f1)}。"
+                    f"在当前全部特征配置对比中，**`{best_item.name}`** 下的 **`{best_item.best_model}`** 表现最好，"
+                    f"Macro-F1 为 {_fmt(best_row.get('macro_f1'))}，"
+                    f"Balanced Accuracy 为 {_fmt(best_row.get('balanced_accuracy'))}，"
+                    f"取货 Recall 为 {_fmt(best_row.get('picking_recall'))}，"
+                    f"货框 Micro-F1 为 {_fmt(best_row.get('box_micro_f1'))}。"
                 ),
                 "",
                 "各特征配置目录内仍保留完整的 `benchmark_report.md` 与单模型评测结果，便于继续下钻分析。",

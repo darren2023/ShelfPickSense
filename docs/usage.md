@@ -405,7 +405,11 @@ models/feature_benchmark/
     ...
 ```
 
-`feature_benchmark_report.md` 会汇总各特征配置下的最佳模型和 Macro-F1，便于横向对比特征子集效果。
+`feature_benchmark_report.md` 会汇总各特征配置下的最佳模型，并包含：
+
+- **各特征配置最佳模型汇总**：每个特征子集的最佳模型及主要指标
+- **各特征配置模型明细**：每个特征子集下全部模型的完整指标对比表
+- **结论**：列出各特征配置的最佳模型，并给出全局推荐组合
 
 ## Benchmark 训练测试报告
 
