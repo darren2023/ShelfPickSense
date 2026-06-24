@@ -11,3 +11,7 @@ wheels/
 
 data/
 models/
+
+# 运行日志
+logs/
+*.log
