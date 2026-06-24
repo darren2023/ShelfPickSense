@@ -1,0 +1,30 @@
+{
+  "train_data_dir": "data/split/Train",
+  "eval_data_dir": "data/split/Test",
+  "output_dir": "models/feature_benchmark",
+  "models": [
+    "sklearn_rf",
+    "sklearn_logistic"
+  ],
+  "jobs": 4,
+  "feature_sets": [
+    {
+      "name": "all_features"
+    },
+    {
+      "name": "selected_spatial",
+      "feature_config": "configs/selected_features.example.json"
+    },
+    {
+      "name": "minimal_inline",
+      "frame_features": [
+        "skeleton.person_count",
+        "spatial.any_wrist_inside_box"
+      ],
+      "box_features": [
+        "spatial.wrist_min_dist_norm",
+        "spatial.wrist_inside"
+      ]
+    }
+  ]
+}

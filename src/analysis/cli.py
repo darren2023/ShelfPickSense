@@ -12,6 +12,7 @@ from loguru import logger
 
 from analysis.benchmark import DEFAULT_MODEL_NAMES, run_benchmark
 from analysis.evaluation import compare_reports, evaluate_model, save_report
+from analysis.feature_benchmark import load_feature_benchmark_plan, run_feature_benchmarks
 from analysis.features.selection import load_feature_selection
 from analysis.models import SUPPORTED_MODEL_NAMES
 from analysis.realtime import RealtimePickingPredictor
@@ -134,6 +135,45 @@ def _cmd_benchmark(args: argparse.Namespace) -> int:
     logger.info("benchmark 完成: models={}, output={}", len(result.model_names), result.output_dir)
     print(json.dumps(result.comparison, ensure_ascii=False, indent=2))
     print(f"\n批量对比报告已保存: {Path(args.output) / 'benchmark_summary.json'}")
+    return 0
+
+
+def _cmd_benchmark_features(args: argparse.Namespace) -> int:
+    plan = load_feature_benchmark_plan(Path(args.plan))
+    if args.data_dir:
+        plan.train_data_dir = Path(args.data_dir)
+    if args.eval_data_dir:
+        plan.eval_data_dir = Path(args.eval_data_dir)
+    if args.output:
+        plan.output_dir = Path(args.output)
+    if args.models:
+        plan.model_names = list(args.models)
+    if args.jobs:
+        plan.jobs = int(args.jobs)
+
+    logger.info(
+        "开始多特征 benchmark: sets={}, models={}, jobs={}, train_data={}, eval_data={}, output={}",
+        len(plan.sets),
+        plan.model_names,
+        plan.jobs,
+        plan.train_data_dir,
+        plan.eval_data_dir or plan.train_data_dir,
+        plan.output_dir,
+    )
+    result = run_feature_benchmarks(plan)
+    logger.info("多特征 benchmark 完成: sets={}, output={}", len(result.sets), result.output_dir)
+    summary = [
+        {
+            "name": item.name,
+            "best_model": item.best_model,
+            "best_macro_f1": item.best_macro_f1,
+            "output_dir": item.output_dir,
+        }
+        for item in result.sets
+    ]
+    print(json.dumps(summary, ensure_ascii=False, indent=2))
+    print(f"\n多特征 benchmark 汇总已保存: {result.summary_path}")
+    print(f"多特征 benchmark 报告已保存: {result.report_path}")
     return 0
 
 
@@ -402,6 +442,22 @@ def build_parser() -> argparse.ArgumentParser:
     p_bench.add_argument("--feature-config", default="", help="特征选择 JSON 配置路径（默认使用全部特征）")
     _add_logging_args(p_bench)
     p_bench.set_defaults(func=_cmd_benchmark)
+
+    p_bench_features = sub.add_parser("benchmark-features", help="按多组特征配置批量运行 benchmark")
+    p_bench_features.add_argument("--plan", required=True, help="批量 benchmark JSON 配置路径")
+    p_bench_features.add_argument("--data-dir", default="", help="覆盖配置中的训练数据目录")
+    p_bench_features.add_argument("--eval-data-dir", default="", help="覆盖配置中的评测数据目录")
+    p_bench_features.add_argument("--output", default="", help="覆盖配置中的输出目录")
+    p_bench_features.add_argument(
+        "--models",
+        nargs="+",
+        default=None,
+        choices=SUPPORTED_MODEL_NAMES,
+        help="覆盖配置中的模型列表",
+    )
+    p_bench_features.add_argument("--jobs", type=int, default=0, help="覆盖配置中的并行模型数")
+    _add_logging_args(p_bench_features)
+    p_bench_features.set_defaults(func=_cmd_benchmark_features)
 
     p_export = sub.add_parser("export-features", help="从记录提取特征并保存到文件")
     p_export.add_argument("--data-dir", required=True, help="数据目录（含多条记录或单条记录）")

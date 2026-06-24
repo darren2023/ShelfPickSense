@@ -64,6 +64,12 @@ uv run python main.py export-features --data-dir data/demo --output outputs/feat
 uv run python main.py train --data-dir data/demo --output models/selected --feature-config configs/selected_features.json
 ```
 
+批量对比多组特征配置的 benchmark：
+
+```bash
+uv run python main.py benchmark-features --plan configs/feature_benchmark.example.json
+```
+
 分析输入记录的特征相关性：
 
 ```bash

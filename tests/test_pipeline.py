@@ -157,6 +157,57 @@ def test_benchmark_train_test_dirs_generate_report(tmp_path: Path):
     assert "Macro-F1" in report
 
 
+def test_cli_benchmark_features_runs_multiple_feature_sets(tmp_path: Path):
+    import json
+
+    from analysis.cli import main
+    from fixtures import make_fixture_record
+
+    train_dir = make_fixture_record(tmp_path / "Train" / "train_record")
+    test_dir = make_fixture_record(tmp_path / "Test" / "test_record")
+    selected_frame = ["skeleton.person_count", "spatial.any_wrist_inside_box"]
+    selected_box = ["spatial.wrist_min_dist_norm", "spatial.wrist_inside"]
+    plan_path = tmp_path / "feature_benchmark_plan.json"
+    output_dir = tmp_path / "feature_benchmark"
+    plan_path.write_text(
+        json.dumps(
+            {
+                "train_data_dir": str(train_dir),
+                "eval_data_dir": str(test_dir),
+                "output_dir": str(output_dir),
+                "models": ["sklearn_rf", "sklearn_logistic"],
+                "jobs": 2,
+                "feature_sets": [
+                    {"name": "all_features"},
+                    {
+                        "name": "selected",
+                        "frame_features": selected_frame,
+                        "box_features": selected_box,
+                    },
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    ret = main(["benchmark-features", "--plan", str(plan_path)])
+
+    assert ret == 0
+    assert (output_dir / "feature_benchmark_summary.json").is_file()
+    assert (output_dir / "feature_benchmark_report.md").is_file()
+    assert (output_dir / "all_features" / "benchmark_summary.json").is_file()
+    assert (output_dir / "selected" / "benchmark_summary.json").is_file()
+
+    summary = json.loads((output_dir / "feature_benchmark_summary.json").read_text(encoding="utf-8"))
+    assert len(summary["sets"]) == 2
+    assert {item["name"] for item in summary["sets"]} == {"all_features", "selected"}
+    report = (output_dir / "feature_benchmark_report.md").read_text(encoding="utf-8")
+    assert "多特征配置 Benchmark 对比报告" in report
+    assert "all_features" in report
+    assert "selected" in report
+
+
 def test_cli_export_features(fixture_data_dir: Path, tmp_path: Path):
     import json
 

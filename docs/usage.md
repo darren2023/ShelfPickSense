@@ -336,6 +336,75 @@ models/benchmark/
 - 每个模型仍会独立训练和独立推理评测。
 - 对比摘要按 `macro_f1` 降序排序。
 
+## 多特征配置批量 Benchmark
+
+当需要对比多组特征子集时，可以使用批量配置依次运行 benchmark。示例见 `configs/feature_benchmark.example.json`：
+
+```json
+{
+  "train_data_dir": "data/split/Train",
+  "eval_data_dir": "data/split/Test",
+  "output_dir": "models/feature_benchmark",
+  "models": ["sklearn_rf", "sklearn_logistic"],
+  "jobs": 4,
+  "feature_sets": [
+    {"name": "all_features"},
+    {
+      "name": "selected_spatial",
+      "feature_config": "configs/selected_features.example.json"
+    },
+    {
+      "name": "minimal_inline",
+      "frame_features": ["skeleton.person_count", "spatial.any_wrist_inside_box"],
+      "box_features": ["spatial.wrist_min_dist_norm", "spatial.wrist_inside"]
+    }
+  ]
+}
+```
+
+运行：
+
+```bash
+uv run python main.py benchmark-features \
+  --plan configs/feature_benchmark.example.json
+```
+
+也可以直接运行脚本：
+
+```bash
+uv run python scripts/benchmark_features.py \
+  --plan configs/feature_benchmark.example.json
+```
+
+如需临时覆盖配置中的数据目录或模型列表：
+
+```bash
+uv run python main.py benchmark-features \
+  --plan configs/feature_benchmark.example.json \
+  --data-dir data/split/Train \
+  --eval-data-dir data/split/Test \
+  --output models/feature_benchmark_run1 \
+  --models sklearn_rf sklearn_logistic \
+  --jobs 2
+```
+
+输出：
+
+```text
+models/feature_benchmark/
+  feature_benchmark_summary.json
+  feature_benchmark_report.md
+  all_features/
+    benchmark_summary.json
+    benchmark_report.md
+    sklearn_rf/
+      ...
+  selected_spatial/
+    ...
+```
+
+`feature_benchmark_report.md` 会汇总各特征配置下的最佳模型和 Macro-F1，便于横向对比特征子集效果。
+
 ## Benchmark 训练测试报告
 
 当输入目录已经按训练集和测试集分好时，可以使用：
