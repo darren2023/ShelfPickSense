@@ -351,7 +351,7 @@ models/benchmark/
     {"name": "all_features"},
     {
       "name": "selected_spatial",
-      "feature_config": "configs/selected_features.example.json"
+      "feature_config": "selected_features.example.json"
     },
     {
       "name": "minimal_inline",
@@ -387,6 +387,8 @@ uv run python main.py benchmark-features \
   --models sklearn_rf sklearn_logistic \
   --jobs 2
 ```
+
+`feature_config` 既可以是相对项目根目录的路径（如 `configs/selected_features.example.json`），也可以是相对 plan 文件所在目录的路径（如 `selected_features.example.json`）。
 
 输出：
 

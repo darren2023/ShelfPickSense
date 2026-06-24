@@ -146,9 +146,7 @@ def load_feature_benchmark_plan(path: str | Path) -> FeatureBenchmarkPlan:
 
 def resolve_feature_selection(spec: FeatureBenchmarkSetSpec, *, base_dir: Path) -> FeatureSelection | None:
     if spec.feature_config:
-        config_path = Path(spec.feature_config)
-        if not config_path.is_absolute():
-            config_path = base_dir / config_path
+        config_path = _resolve_config_path(spec.feature_config, base_dir=base_dir)
         return load_feature_selection(config_path)
     if spec.frame_features is not None or spec.box_features is not None:
         return FeatureSelection(
@@ -156,6 +154,22 @@ def resolve_feature_selection(spec: FeatureBenchmarkSetSpec, *, base_dir: Path) 
             box_features=spec.box_features,
         )
     return None
+
+
+def _resolve_config_path(path: str, *, base_dir: Path) -> Path:
+    """解析特征配置文件路径，兼容相对项目根目录与相对 plan 文件目录两种写法。"""
+    config_path = Path(path)
+    if config_path.is_absolute():
+        if not config_path.is_file():
+            raise FileNotFoundError(f"特征配置文件不存在: {config_path}")
+        return config_path
+
+    candidates = [config_path, base_dir / config_path]
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate.resolve()
+    tried = ", ".join(str(item.resolve()) for item in candidates)
+    raise FileNotFoundError(f"特征配置文件不存在: {path}（已尝试: {tried}）")
 
 
 def _best_from_benchmark(result: BenchmarkResult) -> tuple[str, float]:

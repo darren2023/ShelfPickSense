@@ -13,7 +13,7 @@
     },
     {
       "name": "selected_spatial",
-      "feature_config": "configs/selected_features.example.json"
+      "feature_config": "selected_features.example.json"
     },
     {
       "name": "minimal_inline",
