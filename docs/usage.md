@@ -284,6 +284,60 @@ models/benchmark/
 - 每个模型仍会独立训练和独立推理评测。
 - 对比摘要按 `macro_f1` 降序排序。
 
+## Benchmark 训练测试报告
+
+当输入目录已经按训练集和测试集分好时，可以使用：
+
+```text
+data/split/
+  Train/
+    record_001/
+      skeleton.parquet
+      annotation.json
+      event_review.json
+  Test/
+    record_101/
+      skeleton.parquet
+      annotation.json
+      event_review.json
+```
+
+直接传入 `Train` 与 `Test` 文件夹运行所有模型训练与测试：
+
+```bash
+uv run python main.py benchmark \
+  --data-dir data/split/Train \
+  --eval-data-dir data/split/Test \
+  --output models/train_test \
+  --jobs 4
+```
+
+指定模型子集：
+
+```bash
+uv run python main.py benchmark \
+  --data-dir data/split/Train \
+  --eval-data-dir data/split/Test \
+  --output models/train_test \
+  --models sklearn_rf sklearn_logistic \
+  --jobs 2
+```
+
+输出：
+
+```text
+models/train_test/
+  benchmark_report.md
+  benchmark_summary.json
+  sklearn_rf/
+    train_result.json
+    eval_report.json
+    eval_predictions_*.json
+  ...
+```
+
+`benchmark_report.md` 会汇总 Train 数据规模、Test 集各模型指标，并按 `macro_f1` 给出推荐模型与结论。结论会同时列出 `balanced_accuracy`、取货 recall 和货框 `micro_f1`，避免只看单一指标。
+
 ## 日志
 
 所有命令支持：

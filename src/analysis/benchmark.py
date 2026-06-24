@@ -168,5 +168,123 @@ def run_benchmark(
         json.dumps(result.to_dict(), ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+    report_path = _write_benchmark_report(result, output_dir)
     logger.info("benchmark 汇总报告已保存: {}", output_dir / "benchmark_summary.json")
+    logger.info("benchmark Markdown 报告已保存: {}", report_path)
     return result
+
+
+def _fmt(value: object, digits: int = 4) -> str:
+    try:
+        return f"{float(value):.{digits}f}"
+    except (TypeError, ValueError):
+        return ""
+
+
+def _comparison_markdown_table(rows: list[dict[str, Any]]) -> str:
+    if not rows:
+        return "无模型结果。\n"
+    columns = [
+        "model_name",
+        "macro_f1",
+        "balanced_accuracy",
+        "picking_f1",
+        "picking_recall",
+        "picking_precision",
+        "box_micro_f1",
+        "box_exact_match",
+    ]
+    labels = {
+        "model_name": "模型",
+        "macro_f1": "Macro-F1",
+        "balanced_accuracy": "Balanced Acc",
+        "picking_f1": "取货 F1",
+        "picking_recall": "取货 Recall",
+        "picking_precision": "取货 Precision",
+        "box_micro_f1": "货框 Micro-F1",
+        "box_exact_match": "货框精确匹配",
+    }
+    lines = [
+        "| " + " | ".join(labels[c] for c in columns) + " |",
+        "| " + " | ".join(["---"] * len(columns)) + " |",
+    ]
+    for row in rows:
+        values = []
+        for col in columns:
+            value = row.get(col, "")
+            values.append(str(value) if col == "model_name" else _fmt(value))
+        lines.append("| " + " | ".join(values) + " |")
+    return "\n".join(lines) + "\n"
+
+
+def _recommendation(comparison: list[dict[str, Any]]) -> tuple[str, str]:
+    if not comparison:
+        return "", "没有可用模型结果，无法给出推荐。"
+    best = comparison[0]
+    best_model = str(best["model_name"])
+    reason = (
+        f"推荐模型 `{best_model}`。它在 Test 集上的 Macro-F1 为 {_fmt(best.get('macro_f1'))}，"
+        f"Balanced Accuracy 为 {_fmt(best.get('balanced_accuracy'))}，"
+        f"取货 Recall 为 {_fmt(best.get('picking_recall'))}，"
+        f"货框 Micro-F1 为 {_fmt(best.get('box_micro_f1'))}。"
+    )
+    if len(comparison) > 1:
+        second = comparison[1]
+        delta = float(best.get("macro_f1", 0.0) or 0.0) - float(second.get("macro_f1", 0.0) or 0.0)
+        if delta < 0.01:
+            reason += (
+                f" 但它与第二名 `{second['model_name']}` 的 Macro-F1 差距只有 {_fmt(delta)}，"
+                "建议结合推理速度、稳定性和业务偏好再做最终选择。"
+            )
+    return best_model, reason
+
+
+def _write_benchmark_report(result: BenchmarkResult, output_dir: Path) -> Path:
+    best_model, recommendation = _recommendation(result.comparison)
+    train = result.train_results[0] if result.train_results else None
+    positive_rate = (train.positive_frames / train.frame_count) if train and train.frame_count else 0.0
+    report_path = output_dir / "benchmark_report.md"
+    lines = [
+        "# Benchmark 模型训练与评测报告",
+        "",
+        "## 数据与任务",
+        "",
+        f"- 训练目录：`{result.train_data_dir}`",
+        f"- 评测目录：`{result.eval_data_dir}`",
+        f"- 输出目录：`{result.output_dir}`",
+        f"- 参与模型：`{', '.join(result.model_names)}`",
+        "",
+        "## 训练数据概览",
+        "",
+    ]
+    if train:
+        lines.extend(
+            [
+                f"- 训练记录数：`{len(train.record_ids)}`",
+                f"- 训练帧数：`{train.frame_count}`",
+                f"- 正样本帧数：`{train.positive_frames}`",
+                f"- 正样本比例：`{_fmt(positive_rate)}`",
+                f"- 货框训练样本数：`{train.box_samples}`",
+                "",
+            ]
+        )
+    lines.extend(
+        [
+            "## 评测集模型对比",
+            "",
+            _comparison_markdown_table(result.comparison),
+            "",
+            "## 结论",
+            "",
+            recommendation,
+            "",
+            "## 输出文件",
+            "",
+            "- `benchmark_summary.json`：完整训练、测试与对比结果。",
+            "- `<model>/train_result.json`：单模型训练结果。",
+            "- `<model>/eval_report.json`：单模型 Test 集评测报告。",
+            "- `<model>/eval_predictions_*.json`：单模型 Test 集逐帧预测结果。",
+        ]
+    )
+    report_path.write_text("\n".join(lines), encoding="utf-8")
+    return report_path

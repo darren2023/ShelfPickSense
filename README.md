@@ -40,6 +40,12 @@ uv run python main.py eval --data-dir data/demo --model models/rf
 uv run python main.py benchmark --data-dir data/demo --output models/benchmark --jobs 4
 ```
 
+使用 `Train/` 和 `Test/` 目录训练测试所有模型并生成结论报告：
+
+```bash
+uv run python main.py benchmark --data-dir data/split/Train --eval-data-dir data/split/Test --output models/train_test --jobs 4
+```
+
 从记录提取特征并保存：
 
 ```bash

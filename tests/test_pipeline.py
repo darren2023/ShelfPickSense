@@ -96,6 +96,46 @@ def test_benchmark_runs_multiple_models(fixture_data_dir: Path, tmp_path: Path):
     assert (output_dir / "benchmark_summary.json").is_file()
 
 
+def test_benchmark_train_test_dirs_generate_report(tmp_path: Path):
+    from analysis.cli import main
+    from fixtures import make_fixture_record
+
+    input_dir = tmp_path / "split_data"
+    train_dir = make_fixture_record(input_dir / "Train" / "train_record")
+    test_dir = make_fixture_record(input_dir / "Test" / "test_record")
+    output_dir = tmp_path / "train_test_benchmark"
+
+    ret = main(
+        [
+            "benchmark",
+            "--data-dir",
+            str(train_dir),
+            "--eval-data-dir",
+            str(test_dir),
+            "--output",
+            str(output_dir),
+            "--models",
+            "sklearn_rf",
+            "sklearn_logistic",
+            "--jobs",
+            "2",
+        ]
+    )
+
+    assert ret == 0
+    assert (output_dir / "benchmark_summary.json").is_file()
+    assert (output_dir / "benchmark_report.md").is_file()
+    assert (output_dir / "sklearn_rf" / "train_result.json").is_file()
+    assert (output_dir / "sklearn_rf" / "eval_report.json").is_file()
+    assert (output_dir / "sklearn_logistic" / "train_result.json").is_file()
+    assert (output_dir / "sklearn_logistic" / "eval_report.json").is_file()
+
+    report = (output_dir / "benchmark_report.md").read_text(encoding="utf-8")
+    assert "Benchmark 模型训练与评测报告" in report
+    assert "## 结论" in report
+    assert "Macro-F1" in report
+
+
 def test_cli_export_features(fixture_data_dir: Path, tmp_path: Path):
     import json
 
