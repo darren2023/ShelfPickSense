@@ -72,6 +72,27 @@ def test_feature_registry_extensible(fixture_data_dir: Path):
     assert "dummy.value" in feat.features
 
 
+def test_supported_sklearn_models_can_train_predict_and_load(fixture_data_dir: Path, tmp_path: Path):
+    from analysis.dataset import load_dataset
+    from analysis.models import SUPPORTED_MODEL_NAMES, SklearnPickingModel, create_model
+
+    dataset = load_dataset(fixture_data_dir)
+    sample = dataset.frame_samples[0]
+
+    for model_name in SUPPORTED_MODEL_NAMES:
+        model = create_model(model_name)
+        model.fit(dataset)
+        prediction = model.predict_frame(sample.x, record_id=sample.record_id, frame_idx=sample.frame_idx)
+        assert prediction.record_id == sample.record_id
+        assert 0.0 <= prediction.picking_prob <= 1.0
+
+        model_dir = tmp_path / model_name
+        model.save(model_dir)
+        loaded = SklearnPickingModel.load(model_dir)
+        loaded_prediction = loaded.predict_frame(sample.x, record_id=sample.record_id, frame_idx=sample.frame_idx)
+        assert 0.0 <= loaded_prediction.picking_prob <= 1.0
+
+
 def test_benchmark_runs_multiple_models(fixture_data_dir: Path, tmp_path: Path):
     from analysis.benchmark import DEFAULT_MODEL_NAMES, run_benchmark
 

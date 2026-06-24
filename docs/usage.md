@@ -29,8 +29,13 @@ uv run python main.py train \
 - `sklearn_logistic`
 - `sklearn_extra_trees`
 - `sklearn_gradient_boosting`
+- `sklearn_hist_gradient_boosting`
+- `sklearn_ada_boost`
 - `sklearn_svm_rbf`
+- `sklearn_linear_svm`
 - `sklearn_knn`
+- `sklearn_decision_tree`
+- `sklearn_dummy`
 
 训练输出：
 

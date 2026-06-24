@@ -10,7 +10,15 @@ from typing import Any
 
 import joblib
 import numpy as np
-from sklearn.ensemble import ExtraTreesClassifier, GradientBoostingClassifier, RandomForestClassifier
+from sklearn.dummy import DummyClassifier
+from sklearn.ensemble import (
+    AdaBoostClassifier,
+    ExtraTreesClassifier,
+    GradientBoostingClassifier,
+    HistGradientBoostingClassifier,
+    RandomForestClassifier,
+)
+from sklearn.tree import DecisionTreeClassifier
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import Pipeline
@@ -24,8 +32,13 @@ SUPPORTED_MODEL_NAMES = [
     "sklearn_logistic",
     "sklearn_extra_trees",
     "sklearn_gradient_boosting",
+    "sklearn_hist_gradient_boosting",
+    "sklearn_ada_boost",
     "sklearn_svm_rbf",
+    "sklearn_linear_svm",
     "sklearn_knn",
+    "sklearn_decision_tree",
+    "sklearn_dummy",
 ]
 
 
@@ -73,16 +86,44 @@ def _make_classifier(model_type: str, *, for_box: bool = False) -> Pipeline:
             max_depth=3,
             random_state=42,
         )
+    elif model_type == "hist_gradient_boosting":
+        est = HistGradientBoostingClassifier(
+            max_iter=80 if for_box else 120,
+            max_leaf_nodes=15,
+            l2_regularization=0.01,
+            random_state=42,
+        )
+    elif model_type == "ada_boost":
+        est = AdaBoostClassifier(
+            n_estimators=60 if for_box else 100,
+            learning_rate=0.5,
+            random_state=42,
+        )
     elif model_type == "svm_rbf":
         est = SVC(
             C=2.0,
             gamma="scale",
             class_weight="balanced",
-            probability=True,
+            random_state=42,
+        )
+    elif model_type == "linear_svm":
+        est = SVC(
+            kernel="linear",
+            C=1.0,
+            class_weight="balanced",
             random_state=42,
         )
     elif model_type == "knn":
         est = KNeighborsClassifier(n_neighbors=3, weights="distance")
+    elif model_type == "decision_tree":
+        est = DecisionTreeClassifier(
+            max_depth=6 if for_box else 8,
+            min_samples_leaf=2,
+            class_weight="balanced",
+            random_state=42,
+        )
+    elif model_type == "dummy":
+        est = DummyClassifier(strategy="prior")
     elif model_type == "random_forest":
         est = RandomForestClassifier(
             n_estimators=80 if for_box else 100,
@@ -97,6 +138,9 @@ def _make_classifier(model_type: str, *, for_box: bool = False) -> Pipeline:
 
 def _positive_probability(clf: Pipeline, x: np.ndarray) -> float:
     if not hasattr(clf, "predict_proba"):
+        if hasattr(clf, "decision_function"):
+            score = np.ravel(clf.decision_function(x))[0]
+            return float(1.0 / (1.0 + np.exp(-score)))
         return float(clf.predict(x)[0])
     probabilities = clf.predict_proba(x)[0]
     classes = list(getattr(clf, "classes_", []))
@@ -210,8 +254,13 @@ def create_model(model_name: str, **kwargs: Any) -> SklearnPickingModel:
         "sklearn_logistic": "logistic",
         "sklearn_extra_trees": "extra_trees",
         "sklearn_gradient_boosting": "gradient_boosting",
+        "sklearn_hist_gradient_boosting": "hist_gradient_boosting",
+        "sklearn_ada_boost": "ada_boost",
         "sklearn_svm_rbf": "svm_rbf",
+        "sklearn_linear_svm": "linear_svm",
         "sklearn_knn": "knn",
+        "sklearn_decision_tree": "decision_tree",
+        "sklearn_dummy": "dummy",
     }
     if model_name not in model_types:
         raise ValueError(f"未知模型: {model_name}，可用模型: {', '.join(SUPPORTED_MODEL_NAMES)}")
