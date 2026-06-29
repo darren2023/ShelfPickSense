@@ -29,7 +29,7 @@ RULE_WINDOW_PAIRS = ((3, 6), (3, 7), (5, 7))
 
 @dataclass
 class RuleEngineParams:
-    """默认与 services.event_engine.collision.CollisionParams 一致。"""
+    """默认与 rule_collision.CollisionParams 一致。"""
 
     wrist_conf: float = 0.3
     elbow_conf: float = 0.3

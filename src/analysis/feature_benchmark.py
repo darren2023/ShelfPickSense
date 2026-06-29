@@ -18,6 +18,7 @@ from analysis.benchmark import (
     _write_benchmark_report,
     run_benchmark,
 )
+from analysis.evaluation import BoxMetrics, ModelEvaluation, PickingMetrics
 from analysis.train import TrainResult
 from analysis.features.selection import FeatureSelection, load_feature_selection
 from analysis.models import SUPPORTED_MODEL_NAMES
@@ -181,9 +182,10 @@ def _resolve_config_path(path: str, *, base_dir: Path) -> Path:
 
 
 def _best_from_benchmark(result: BenchmarkResult) -> tuple[str, float]:
-    if not result.comparison:
+    ml_rows = [row for row in result.comparison if not row.get("is_baseline")]
+    if not ml_rows:
         return "", 0.0
-    best = result.comparison[0]
+    best = max(ml_rows, key=lambda row: float(row.get("macro_f1") or 0.0))
     return str(best.get("model_name") or ""), float(best.get("macro_f1") or 0.0)
 
 
@@ -287,7 +289,15 @@ def _write_batch_report(batch: FeatureBenchmarkBatchResult, output_dir: Path) ->
         lines.extend(_feature_names_block(selection))
         lines.append(f"- 输出目录：`{item.output_dir}`")
         lines.append("")
-        lines.append(_comparison_markdown_table(item.benchmark.comparison).rstrip())
+        lines.append(
+            _comparison_markdown_table(
+                item.benchmark.comparison,
+                include_baseline_delta=(
+                    item.benchmark.baseline_report is not None
+                    or any(row.get("is_baseline") for row in item.benchmark.comparison)
+                ),
+            ).rstrip()
+        )
         lines.append("")
         row = _best_model_summary_row(item)
         if row:
@@ -333,8 +343,27 @@ def _write_batch_report(batch: FeatureBenchmarkBatchResult, output_dir: Path) ->
     return report_path
 
 
+def _model_evaluation_from_dict(data: dict[str, Any]) -> ModelEvaluation:
+    picking_data = dict(data.get("picking") or {})
+    box_data = dict(data.get("box") or {})
+    return ModelEvaluation(
+        model_name=str(data.get("model_name") or ""),
+        data_dir=str(data.get("data_dir") or ""),
+        record_ids=list(data.get("record_ids") or []),
+        picking=PickingMetrics(**picking_data),
+        box=BoxMetrics(**box_data),
+        evaluated_at=str(data.get("evaluated_at") or ""),
+        extra=dict(data.get("extra") or {}),
+    )
+
+
 def _benchmark_result_from_dict(data: dict[str, Any]) -> BenchmarkResult:
     train_results = [TrainResult(**item) for item in data.get("train_results") or []]
+    comparison = list(data.get("comparison") or [])
+    baseline_report = None
+    raw_baseline = data.get("baseline_report")
+    if isinstance(raw_baseline, dict):
+        baseline_report = _model_evaluation_from_dict(raw_baseline)
     return BenchmarkResult(
         train_data_dir=str(data.get("train_data_dir") or ""),
         eval_data_dir=str(data.get("eval_data_dir") or ""),
@@ -342,8 +371,9 @@ def _benchmark_result_from_dict(data: dict[str, Any]) -> BenchmarkResult:
         model_names=list(data.get("model_names") or []),
         train_results=train_results,
         reports=[],
-        comparison=list(data.get("comparison") or []),
+        comparison=comparison,
         benchmarked_at=str(data.get("benchmarked_at") or ""),
+        baseline_report=baseline_report,
     )
 
 

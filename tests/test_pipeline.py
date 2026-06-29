@@ -107,9 +107,16 @@ def test_benchmark_runs_multiple_models(fixture_data_dir: Path, tmp_path: Path):
     )
 
     assert [r.model_name for r in result.reports] == ["sklearn_rf", "sklearn_logistic"]
-    assert len(result.comparison) == 2
-    assert "macro_f1" in result.comparison[0]
-    assert "negative_f1" in result.comparison[0]
+    assert len(result.comparison) == 3
+    assert result.comparison[0]["model_name"] == "rule_baseline"
+    assert result.comparison[0].get("is_baseline") is True
+    ml_rows = [row for row in result.comparison if not row.get("is_baseline")]
+    assert len(ml_rows) == 2
+    assert "macro_f1" in ml_rows[0]
+    assert "beats_baseline" in ml_rows[0]
+    assert "negative_f1" in ml_rows[0]
+    assert result.baseline_report is not None
+    assert (output_dir / "rule_baseline" / "eval_report.json").is_file()
     assert (output_dir / "sklearn_rf" / "eval_report.json").is_file()
     assert (output_dir / "sklearn_rf" / "eval_predictions_record_001.json").is_file()
     assert (output_dir / "sklearn_logistic" / "eval_report.json").is_file()

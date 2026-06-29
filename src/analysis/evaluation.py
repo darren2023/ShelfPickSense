@@ -315,22 +315,47 @@ def save_report(report: ModelEvaluation, output_path: Path) -> Path:
     return output_path
 
 
+def _report_to_comparison_row(report: ModelEvaluation) -> dict[str, Any]:
+    return {
+        "model_name": report.model_name,
+        "macro_f1": report.picking.macro_f1,
+        "balanced_accuracy": report.picking.balanced_accuracy,
+        "picking_f1": report.picking.f1,
+        "negative_f1": report.picking.negative_f1,
+        "picking_recall": report.picking.recall,
+        "picking_precision": report.picking.precision,
+        "box_exact_match": report.box.exact_match_ratio,
+        "box_micro_f1": report.box.micro_f1,
+        "evaluated_at": report.evaluated_at,
+    }
+
+
 def compare_reports(reports: list[ModelEvaluation]) -> list[dict[str, Any]]:
-    """按取货 F1 排序的模型对比摘要。"""
-    rows = []
-    for r in reports:
-        rows.append(
-            {
-                "model_name": r.model_name,
-                "macro_f1": r.picking.macro_f1,
-                "balanced_accuracy": r.picking.balanced_accuracy,
-                "picking_f1": r.picking.f1,
-                "negative_f1": r.picking.negative_f1,
-                "picking_recall": r.picking.recall,
-                "picking_precision": r.picking.precision,
-                "box_exact_match": r.box.exact_match_ratio,
-                "box_micro_f1": r.box.micro_f1,
-                "evaluated_at": r.evaluated_at,
-            }
-        )
+    """按 Macro-F1 排序的模型对比摘要。"""
+    rows = [_report_to_comparison_row(r) for r in reports]
     return sorted(rows, key=lambda x: x["macro_f1"], reverse=True)
+
+
+def compare_reports_with_baseline(
+    reports: list[ModelEvaluation],
+    baseline: ModelEvaluation | None,
+) -> list[dict[str, Any]]:
+    """在模型对比中加入规则基线，并标注是否超过基线。"""
+    ml_rows = compare_reports(reports)
+    if baseline is None:
+        return ml_rows
+
+    baseline_macro = float(baseline.picking.macro_f1)
+    baseline_row = _report_to_comparison_row(baseline)
+    baseline_row["is_baseline"] = True
+    baseline_row["beats_baseline"] = None
+    baseline_row["macro_f1_delta"] = 0.0
+
+    for row in ml_rows:
+        delta = float(row["macro_f1"]) - baseline_macro
+        row["is_baseline"] = False
+        row["baseline_macro_f1"] = baseline_macro
+        row["macro_f1_delta"] = delta
+        row["beats_baseline"] = delta > 0.0
+
+    return [baseline_row, *ml_rows]
