@@ -9,6 +9,8 @@
 - 支持多个 sklearn 模型训练、评测、批量 benchmark。
 - 支持将记录特征导出为 parquet 文件，便于外部分析或复用。
 - 支持 macro-F1、balanced accuracy、货框 micro-F1 等不均衡样本友好指标。
+- 训练前默认过滤无骨架帧，减轻空帧对样本均衡的干扰。
+- Benchmark 自动对比规则碰撞基线（`rule_baseline`），判断 ML 模型是否超过规则方法。
 - 支持逐帧实时推理，便于外部应用直接集成 `RealtimePickingPredictor`。
 - 特征提取模块采用注册表模式，便于新增特征。
 
@@ -98,15 +100,18 @@ uv run python main.py infer-frame --model models/rf --record-dir data/demo --vid
 
 ```text
 src/analysis/
-  annotation.py      # annotation.json 解析与货框 token
-  records.py         # skeleton.parquet / annotation / event_review 加载
-  labels.py          # 人工复核监督信号
-  dataset.py         # 训练样本构建
-  features/          # 可扩展特征提取
-  models/            # sklearn 两阶段模型
-  train.py           # 训练流程
-  evaluation.py      # 指标、预测保存、报告生成
-  benchmark.py       # 多模型批量训练评测
-  realtime.py        # 外部应用实时逐帧推理
-  cli.py             # 命令行入口
+  annotation.py         # annotation.json 解析与货框 token
+  records.py            # skeleton.parquet / annotation / event_review 加载
+  labels.py             # 人工复核监督信号
+  dataset.py            # 训练样本构建与无骨架帧过滤
+  rule_collision.py     # 规则碰撞检测（与 event_engine 对齐）
+  rule_baseline.py      # 规则基线评测
+  features/             # 可扩展特征提取（含 rule_engine 规则特征）
+  models/               # sklearn 两阶段模型
+  train.py              # 训练流程
+  evaluation.py         # 指标、预测保存、报告生成
+  benchmark.py          # 多模型批量训练评测与基线对比
+  feature_benchmark.py  # 多特征配置批量 benchmark
+  realtime.py           # 外部应用实时逐帧推理
+  cli.py                # 命令行入口
 ```

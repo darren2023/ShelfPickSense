@@ -64,6 +64,8 @@ COCO17 中与当前特征强相关的关键点：
 - `kpt_5 / kpt_6`：左右肩。
 - `kpt_9 / kpt_10`：左右手腕。
 
+若某帧在 `skeleton.parquet` 中无有效关键点（全为空或置信度过低），训练时会默认过滤该帧；导出特征与评测仍保留这些帧。
+
 ## event_review.json
 
 `event_review.json` 是人工复核结果，用于构建监督信号。

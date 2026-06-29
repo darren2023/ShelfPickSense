@@ -22,6 +22,33 @@ uv run python main.py train \
 - `--data-dir`：训练数据目录，可以是单条记录目录，也可以是多条记录的父目录。
 - `--output`：模型输出目录。
 - `--model`：模型名称。
+- `--feature-config`：特征选择 JSON 配置路径（可选）。
+- `--keep-empty-skeleton-frames`：保留无骨架帧参与训练（默认会在特征提取后过滤）。
+
+### 无骨架帧过滤
+
+训练流程为：**特征提取 → 过滤无骨架帧 → 模型拟合**。
+
+默认会剔除以下帧，避免大量空帧拉低正样本比例、干扰模型学习：
+
+- `persons` 为空；
+- 所有人均无置信度 ≥ 0.3 的肩/腕关键点。
+
+过滤仅作用于**训练**；`eval`、`benchmark` 的评测阶段仍使用全部帧，以反映真实场景表现。
+
+如需保留无骨架帧：
+
+```bash
+uv run python main.py train \
+  --data-dir data/demo \
+  --output models/rf \
+  --model sklearn_rf \
+  --keep-empty-skeleton-frames
+```
+
+`train_result.json` 会记录 `skipped_empty_skeleton_frames`，表示被过滤的帧数。
+
+`export-features` 和 `analyze-features` **不会**过滤，仍导出/分析全部帧。
 
 当前支持模型：
 
@@ -312,7 +339,8 @@ uv run python main.py benchmark \
   --data-dir data/train \
   --eval-data-dir data/eval \
   --output models/benchmark \
-  --jobs 4
+  --jobs 4 \
+  --keep-empty-skeleton-frames
 ```
 
 benchmark 输出：
@@ -320,6 +348,10 @@ benchmark 输出：
 ```text
 models/benchmark/
   benchmark_summary.json
+  benchmark_report.md
+  rule_baseline/
+    eval_report.json
+    eval_predictions_<record_name>.json
   sklearn_rf/
     meta.json
     picking_clf.pkl
@@ -333,8 +365,25 @@ models/benchmark/
 说明：
 
 - benchmark 会复用训练数据加载和训练 Dataset 构建，减少重复数据处理。
+- 训练集默认过滤无骨架帧（可用 `--keep-empty-skeleton-frames` 关闭）；评测集不过滤。
 - 每个模型仍会独立训练和独立推理评测。
-- 对比摘要按 `macro_f1` 降序排序。
+- 对比摘要首行为规则基线 `rule_baseline`，其后为 ML 模型，并标注 **相对基线 Δ** 与 **是否超过基线**。
+- ML 模型排序按 `macro_f1` 降序；推荐结论会说明是否超过规则基线。
+
+### 规则基线（rule_baseline）
+
+每次 benchmark 会自动运行与线上 event_engine 对齐的规则碰撞方法作为基线：
+
+- 软边界容差、前臂外推、M-of-N 滑窗门控、人员跟踪；
+- 报警触发帧视为取货，报警货框 token 作为预测货框。
+
+在 `benchmark_report.md` 中可查看：
+
+- 基线 Macro-F1 / 取货 F1 / 货框 Micro-F1；
+- 各 ML 模型相对基线的 Macro-F1 差值；
+- 哪些模型超过了基线。
+
+`benchmark_summary.json` 的 `comparison` 数组中，基线行带 `"is_baseline": true`；ML 模型行带 `"beats_baseline"` 和 `"macro_f1_delta"` 字段。
 
 ## 多特征配置批量 Benchmark
 
@@ -419,8 +468,10 @@ models/feature_benchmark/
 `feature_benchmark_report.md` 会汇总各特征配置下的最佳模型，并包含：
 
 - **各特征配置最佳模型汇总**：每个特征子集的最佳模型及主要指标
-- **各特征配置模型明细**：每个特征子集下全部模型的完整指标对比表
+- **各特征配置模型明细**：每个特征子集下全部模型的完整指标对比表（含 `rule_baseline` 与是否超过基线）
 - **结论**：列出各特征配置的最佳模型，并给出全局推荐组合
+
+各特征子目录内的 `benchmark_report.md` 同样包含规则基线对比与无骨架帧过滤后的训练统计。
 
 ## Benchmark 训练测试报告
 
@@ -474,7 +525,7 @@ models/train_test/
   ...
 ```
 
-`benchmark_report.md` 会汇总 Train 数据规模、Test 集各模型指标，并按 `macro_f1` 给出推荐模型与结论。结论会同时列出 `balanced_accuracy`、取货 recall 和货框 `micro_f1`，避免只看单一指标。
+`benchmark_report.md` 会汇总 Train 数据规模、Test 集各模型指标，并按 `macro_f1` 给出推荐模型与结论。结论会同时列出 `balanced_accuracy`、取货 recall、货框 `micro_f1`，以及相对规则基线 `rule_baseline` 是否更优。
 
 ## 日志
 
