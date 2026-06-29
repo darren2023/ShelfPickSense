@@ -10,6 +10,7 @@ from typing import Any
 
 import joblib
 import numpy as np
+from sklearn.base import BaseEstimator, ClassifierMixin
 from sklearn.dummy import DummyClassifier
 from sklearn.ensemble import (
     AdaBoostClassifier,
@@ -28,18 +29,20 @@ from sklearn.svm import SVC
 from analysis.dataset import Dataset
 
 
-class _ArrayLGBMClassifier:
+class _ArrayLGBMClassifier(BaseEstimator, ClassifierMixin):
     """LightGBM 包装：始终用 numpy 数组训练/预测，避免 Pipeline 特征名警告。"""
 
     def __init__(self, **kwargs: Any) -> None:
+        self.clf_kwargs = kwargs
+
+    def fit(self, X: np.ndarray, y: np.ndarray, sample_weight: Any = None) -> _ArrayLGBMClassifier:
         try:
             from lightgbm import LGBMClassifier
         except ImportError as exc:
             raise ImportError("需要安装 lightgbm，请运行: uv sync") from exc
-        self._clf = LGBMClassifier(**kwargs)
-
-    def fit(self, X: np.ndarray, y: np.ndarray, sample_weight: Any = None) -> _ArrayLGBMClassifier:
+        self._clf = LGBMClassifier(**self.clf_kwargs)
         self._clf.fit(np.asarray(X), y, sample_weight=sample_weight)
+        self.classes_ = self._clf.classes_
         return self
 
     def predict(self, X: np.ndarray) -> np.ndarray:
@@ -47,10 +50,6 @@ class _ArrayLGBMClassifier:
 
     def predict_proba(self, X: np.ndarray) -> np.ndarray:
         return self._clf.predict_proba(np.asarray(X))
-
-    @property
-    def classes_(self) -> np.ndarray:
-        return self._clf.classes_
 
 
 SUPPORTED_MODEL_NAMES = [
@@ -68,6 +67,68 @@ SUPPORTED_MODEL_NAMES = [
     "xgboost",
     "lightgbm",
 ]
+
+TUNABLE_MODEL_NAMES = ["xgboost", "lightgbm"]
+
+_MODEL_NAME_TO_TYPE = {
+    "sklearn_rf": "random_forest",
+    "sklearn_logistic": "logistic",
+    "sklearn_extra_trees": "extra_trees",
+    "sklearn_gradient_boosting": "gradient_boosting",
+    "sklearn_hist_gradient_boosting": "hist_gradient_boosting",
+    "sklearn_ada_boost": "ada_boost",
+    "sklearn_svm_rbf": "svm_rbf",
+    "sklearn_linear_svm": "linear_svm",
+    "sklearn_knn": "knn",
+    "sklearn_decision_tree": "decision_tree",
+    "sklearn_dummy": "dummy",
+    "xgboost": "xgboost",
+    "lightgbm": "lightgbm",
+}
+
+
+def resolve_model_type(model_name: str) -> str:
+    if model_name not in _MODEL_NAME_TO_TYPE:
+        raise ValueError(f"未知模型: {model_name}，可用模型: {', '.join(SUPPORTED_MODEL_NAMES)}")
+    return _MODEL_NAME_TO_TYPE[model_name]
+
+
+def _default_xgboost_params(*, for_box: bool) -> dict[str, Any]:
+    return {
+        "n_estimators": 80 if for_box else 120,
+        "max_depth": 4 if for_box else 6,
+        "learning_rate": 0.1,
+        "subsample": 0.9,
+        "colsample_bytree": 0.9,
+        "random_state": 42,
+        "eval_metric": "logloss",
+        "verbosity": 0,
+    }
+
+
+def _default_lightgbm_params(*, for_box: bool) -> dict[str, Any]:
+    return {
+        "n_estimators": 80 if for_box else 120,
+        "max_depth": 6 if for_box else 8,
+        "learning_rate": 0.1,
+        "class_weight": "balanced",
+        "random_state": 42,
+        "verbosity": -1,
+    }
+
+
+def _build_xgboost_classifier(*, for_box: bool, params: dict[str, Any] | None) -> Any:
+    try:
+        from xgboost import XGBClassifier
+    except ImportError as exc:
+        raise ImportError("需要安装 xgboost，请运行: uv sync") from exc
+    merged = {**_default_xgboost_params(for_box=for_box), **(params or {})}
+    return XGBClassifier(**merged)
+
+
+def _build_lightgbm_classifier(*, for_box: bool, params: dict[str, Any] | None) -> _ArrayLGBMClassifier:
+    merged = {**_default_lightgbm_params(for_box=for_box), **(params or {})}
+    return _ArrayLGBMClassifier(**merged)
 
 
 @dataclass
@@ -98,7 +159,12 @@ class PickingModel(ABC):
     def load(cls, path: Path) -> PickingModel: ...
 
 
-def _make_classifier(model_type: str, *, for_box: bool = False) -> Pipeline:
+def _make_classifier(
+    model_type: str,
+    *,
+    for_box: bool = False,
+    params: dict[str, Any] | None = None,
+) -> Pipeline:
     if model_type == "logistic":
         est = LogisticRegression(max_iter=1000, class_weight="balanced")
     elif model_type == "extra_trees":
@@ -153,29 +219,9 @@ def _make_classifier(model_type: str, *, for_box: bool = False) -> Pipeline:
     elif model_type == "dummy":
         est = DummyClassifier(strategy="prior")
     elif model_type == "xgboost":
-        try:
-            from xgboost import XGBClassifier
-        except ImportError as exc:
-            raise ImportError("需要安装 xgboost，请运行: uv sync") from exc
-        est = XGBClassifier(
-            n_estimators=80 if for_box else 120,
-            max_depth=4 if for_box else 6,
-            learning_rate=0.1,
-            subsample=0.9,
-            colsample_bytree=0.9,
-            random_state=42,
-            eval_metric="logloss",
-            verbosity=0,
-        )
+        est = _build_xgboost_classifier(for_box=for_box, params=params)
     elif model_type == "lightgbm":
-        est = _ArrayLGBMClassifier(
-            n_estimators=80 if for_box else 120,
-            max_depth=6 if for_box else 8,
-            learning_rate=0.1,
-            class_weight="balanced",
-            random_state=42,
-            verbosity=-1,
-        )
+        est = _build_lightgbm_classifier(for_box=for_box, params=params)
     elif model_type == "random_forest":
         est = RandomForestClassifier(
             n_estimators=80 if for_box else 100,
@@ -211,6 +257,7 @@ class SklearnPickingModel(PickingModel):
     frame_feature_names: list[str] = field(default_factory=list)
     box_feature_names: list[str] = field(default_factory=list)
     box_score_threshold: float = 0.5
+    clf_params: dict[str, Any] | None = None
     name: str = "sklearn_two_stage"
 
     def fit(self, dataset: Dataset) -> None:
@@ -219,7 +266,7 @@ class SklearnPickingModel(PickingModel):
 
         x_pick = np.vstack([s.x for s in dataset.frame_samples]) if dataset.frame_samples else np.empty((0, 0))
         y_pick = np.array([int(s.is_picking) for s in dataset.frame_samples], dtype=np.int32)
-        self.picking_clf = _make_classifier(self.model_type)
+        self.picking_clf = _make_classifier(self.model_type, params=self.clf_params)
         if len(y_pick) > 0 and len(np.unique(y_pick)) > 1:
             self.picking_clf.fit(x_pick, y_pick)
         elif len(y_pick) > 0:
@@ -229,7 +276,7 @@ class SklearnPickingModel(PickingModel):
 
         x_box = np.vstack([s.x for s in dataset.box_samples]) if dataset.box_samples else np.empty((0, 0))
         y_box = np.array([int(s.is_target) for s in dataset.box_samples], dtype=np.int32)
-        self.box_clf = _make_classifier(self.model_type, for_box=True)
+        self.box_clf = _make_classifier(self.model_type, for_box=True, params=self.clf_params)
         if len(y_box) > 0 and len(np.unique(y_box)) > 1:
             self.box_clf.fit(x_box, y_box)
         elif len(y_box) > 0:
@@ -272,6 +319,7 @@ class SklearnPickingModel(PickingModel):
             "frame_feature_names": self.frame_feature_names,
             "box_feature_names": self.box_feature_names,
             "box_score_threshold": self.box_score_threshold,
+            "clf_params": self.clf_params,
         }
         (path / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
         joblib.dump(self.picking_clf, path / "picking_clf.pkl")
@@ -287,6 +335,7 @@ class SklearnPickingModel(PickingModel):
             box_feature_names=list(meta.get("box_feature_names") or []),
             box_score_threshold=float(meta.get("box_score_threshold", 0.5)),
             name=meta.get("name", "sklearn_two_stage"),
+            clf_params=dict(meta["clf_params"]) if isinstance(meta.get("clf_params"), dict) else None,
         )
         model.picking_clf = joblib.load(path / "picking_clf.pkl")
         box_path = path / "box_clf.pkl"
@@ -299,23 +348,7 @@ MODEL_REGISTRY: dict[str, type[SklearnPickingModel]] = {
 }
 
 
-def create_model(model_name: str, **kwargs: Any) -> SklearnPickingModel:
+def create_model(model_name: str, *, clf_params: dict[str, Any] | None = None, **kwargs: Any) -> SklearnPickingModel:
     model_name = model_name or "sklearn_rf"
-    model_types = {
-        "sklearn_rf": "random_forest",
-        "sklearn_logistic": "logistic",
-        "sklearn_extra_trees": "extra_trees",
-        "sklearn_gradient_boosting": "gradient_boosting",
-        "sklearn_hist_gradient_boosting": "hist_gradient_boosting",
-        "sklearn_ada_boost": "ada_boost",
-        "sklearn_svm_rbf": "svm_rbf",
-        "sklearn_linear_svm": "linear_svm",
-        "sklearn_knn": "knn",
-        "sklearn_decision_tree": "decision_tree",
-        "sklearn_dummy": "dummy",
-        "xgboost": "xgboost",
-        "lightgbm": "lightgbm",
-    }
-    if model_name not in model_types:
-        raise ValueError(f"未知模型: {model_name}，可用模型: {', '.join(SUPPORTED_MODEL_NAMES)}")
-    return SklearnPickingModel(model_type=model_types[model_name], name=model_name, **kwargs)
+    model_type = resolve_model_type(model_name)
+    return SklearnPickingModel(model_type=model_type, name=model_name, clf_params=clf_params, **kwargs)

@@ -11,6 +11,7 @@
 - 支持 macro-F1、balanced accuracy、货框 micro-F1 等不均衡样本友好指标。
 - 训练前默认过滤无骨架帧，减轻空帧对样本均衡的干扰。
 - Benchmark 自动对比规则碰撞基线（`rule_baseline`），判断 ML 模型是否超过规则方法。
+- Optuna 超参数搜索（`tune` 命令，支持 xgboost / lightgbm）。
 - 支持逐帧实时推理，便于外部应用直接集成 `RealtimePickingPredictor`。
 - 特征提取模块采用注册表模式，便于新增特征。
 
@@ -28,6 +29,12 @@ uv sync
 
 ```bash
 uv run python main.py train --data-dir data/demo --output models/rf --model sklearn_rf
+```
+
+Optuna 调参并训练 XGBoost / LightGBM：
+
+```bash
+uv run python main.py tune --data-dir data/demo --output models/xgb_tuned --model xgboost --trials 50
 ```
 
 评测模型并保存逐帧预测结果：
@@ -121,6 +128,7 @@ src/analysis/
   features/             # 可扩展特征提取（含 rule_engine 规则特征）
   models/               # sklearn 两阶段模型
   train.py              # 训练流程
+  tuning.py             # Optuna 超参数搜索（xgboost / lightgbm）
   evaluation.py         # 指标、预测保存、报告生成
   benchmark.py          # 多模型批量训练评测与基线对比
   feature_benchmark.py  # 多特征配置批量 benchmark

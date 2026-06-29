@@ -85,11 +85,12 @@ def train_model_from_dataset(
     output_dir: Path,
     model_name: str = "sklearn_rf",
     skipped_empty_skeleton_frames: int = 0,
+    clf_params: dict | None = None,
 ) -> tuple[TrainResult, SklearnPickingModel]:
     """使用已构建的数据集训练模型，供 benchmark 复用数据处理结果。"""
     data_dir = Path(data_dir)
     output_dir = Path(output_dir)
-    model = create_model(model_name)
+    model = create_model(model_name, clf_params=clf_params)
     logger.info("开始拟合模型: {}", model.name)
     model.fit(dataset)
     logger.info("模型拟合完成: {}", model.name)

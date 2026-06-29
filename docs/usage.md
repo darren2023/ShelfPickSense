@@ -76,6 +76,59 @@ models/rf/
   train_result.json
 ```
 
+## Optuna 超参数调优
+
+对 **xgboost** 和 **lightgbm** 使用 Optuna 搜索超参数，按 record_id 分组交叉验证，优化目标为：
+
+`0.7 × 取货 Macro-F1 + 0.3 × 货框 Macro-F1`
+
+调参完成后会用最优参数在**全量训练集**上重新训练并保存模型。
+
+```bash
+uv run python main.py tune \
+  --data-dir data/demo \
+  --output models/xgb_tuned \
+  --model xgboost \
+  --trials 50 \
+  --cv-folds 5
+```
+
+LightGBM 示例：
+
+```bash
+uv run python main.py tune \
+  --data-dir data/demo \
+  --output models/lgbm_tuned \
+  --model lightgbm \
+  --trials 80 \
+  --cv-folds 5 \
+  --timeout 3600
+```
+
+参数：
+
+- `--model`：`xgboost` 或 `lightgbm`（默认 `xgboost`）
+- `--trials`：Optuna 试验次数（默认 50）
+- `--cv-folds`：按 `record_id` 分组的交叉验证折数（默认 5）
+- `--timeout`：超时秒数，0 表示不限制
+- `--seed`：随机种子（默认 42）
+- `--feature-config`：特征选择配置（可选）
+- `--keep-empty-skeleton-frames`：保留无骨架帧
+
+输出：
+
+```text
+models/xgb_tuned/
+  meta.json              # 含 clf_params 最优超参
+  picking_clf.pkl
+  box_clf.pkl
+  train_result.json
+  tune_result.json       # 调参摘要与 CV 分数
+  optuna_trials.json     # 各 trial 明细
+```
+
+`meta.json` 中的 `clf_params` 会随模型一起保存，后续 `eval` / `infer-frame` 可直接加载使用。
+
 ## 导出特征
 
 从记录目录提取训练流程使用的帧级特征和货框级特征，并保存为文件：

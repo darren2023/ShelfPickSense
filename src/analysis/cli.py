@@ -18,6 +18,7 @@ from analysis.models import SUPPORTED_MODEL_NAMES
 from analysis.realtime import RealtimePickingPredictor
 from analysis.rule_baseline import RealtimeRulePredictor, evaluate_rule_baseline
 from analysis.train import train_model
+from analysis.tuning import TUNABLE_MODEL_NAMES, tune_model
 
 
 def configure_logging(args: argparse.Namespace) -> None:
@@ -63,6 +64,37 @@ def _cmd_train(args: argparse.Namespace) -> int:
         result.positive_frames,
         result.box_samples,
         result.skipped_empty_skeleton_frames,
+    )
+    print(json.dumps(result.to_dict(), ensure_ascii=False, indent=2))
+    return 0
+
+
+def _cmd_tune(args: argparse.Namespace) -> int:
+    timeout = float(args.timeout) if args.timeout else None
+    logger.info(
+        "开始 Optuna 调参: model={}, data_dir={}, output={}, trials={}, cv_folds={}",
+        args.model,
+        args.data_dir,
+        args.output,
+        args.trials,
+        args.cv_folds,
+    )
+    result = tune_model(
+        Path(args.data_dir),
+        Path(args.output),
+        model_name=args.model,
+        n_trials=int(args.trials),
+        cv_folds=int(args.cv_folds),
+        timeout=timeout,
+        seed=int(args.seed),
+        feature_selection=load_feature_selection(args.feature_config),
+        filter_empty_skeleton=not args.keep_empty_skeleton_frames,
+    )
+    logger.info(
+        "调参完成: model={}, best_value={:.4f}, output={}",
+        result.model_name,
+        result.best_value,
+        result.model_path,
     )
     print(json.dumps(result.to_dict(), ensure_ascii=False, indent=2))
     return 0
@@ -512,6 +544,28 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_logging_args(p_train)
     p_train.set_defaults(func=_cmd_train)
+
+    p_tune = sub.add_parser("tune", help="Optuna 超参数搜索并训练模型（支持 xgboost / lightgbm）")
+    p_tune.add_argument("--data-dir", required=True, help="训练数据目录")
+    p_tune.add_argument("--output", required=True, help="模型与调参结果输出目录")
+    p_tune.add_argument(
+        "--model",
+        default="xgboost",
+        choices=TUNABLE_MODEL_NAMES,
+        help="待调参模型",
+    )
+    p_tune.add_argument("--trials", type=int, default=50, help="Optuna 试验次数（默认 50）")
+    p_tune.add_argument("--cv-folds", type=int, default=5, help="按 record_id 分组的交叉验证折数（默认 5）")
+    p_tune.add_argument("--timeout", type=float, default=0, help="调参超时秒数，0 表示不限制")
+    p_tune.add_argument("--seed", type=int, default=42, help="随机种子")
+    p_tune.add_argument("--feature-config", default="", help="特征选择 JSON 配置路径")
+    p_tune.add_argument(
+        "--keep-empty-skeleton-frames",
+        action="store_true",
+        help="保留无骨架帧参与训练",
+    )
+    _add_logging_args(p_tune)
+    p_tune.set_defaults(func=_cmd_tune)
 
     p_eval = sub.add_parser("eval", help="评测模型")
     p_eval.add_argument("--data-dir", required=True, help="评测数据目录")
