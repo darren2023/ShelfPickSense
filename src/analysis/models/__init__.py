@@ -27,6 +27,32 @@ from sklearn.svm import SVC
 
 from analysis.dataset import Dataset
 
+
+class _ArrayLGBMClassifier:
+    """LightGBM 包装：始终用 numpy 数组训练/预测，避免 Pipeline 特征名警告。"""
+
+    def __init__(self, **kwargs: Any) -> None:
+        try:
+            from lightgbm import LGBMClassifier
+        except ImportError as exc:
+            raise ImportError("需要安装 lightgbm，请运行: uv sync") from exc
+        self._clf = LGBMClassifier(**kwargs)
+
+    def fit(self, X: np.ndarray, y: np.ndarray, sample_weight: Any = None) -> _ArrayLGBMClassifier:
+        self._clf.fit(np.asarray(X), y, sample_weight=sample_weight)
+        return self
+
+    def predict(self, X: np.ndarray) -> np.ndarray:
+        return self._clf.predict(np.asarray(X))
+
+    def predict_proba(self, X: np.ndarray) -> np.ndarray:
+        return self._clf.predict_proba(np.asarray(X))
+
+    @property
+    def classes_(self) -> np.ndarray:
+        return self._clf.classes_
+
+
 SUPPORTED_MODEL_NAMES = [
     "sklearn_rf",
     "sklearn_logistic",
@@ -39,6 +65,8 @@ SUPPORTED_MODEL_NAMES = [
     "sklearn_knn",
     "sklearn_decision_tree",
     "sklearn_dummy",
+    "xgboost",
+    "lightgbm",
 ]
 
 
@@ -124,6 +152,30 @@ def _make_classifier(model_type: str, *, for_box: bool = False) -> Pipeline:
         )
     elif model_type == "dummy":
         est = DummyClassifier(strategy="prior")
+    elif model_type == "xgboost":
+        try:
+            from xgboost import XGBClassifier
+        except ImportError as exc:
+            raise ImportError("需要安装 xgboost，请运行: uv sync") from exc
+        est = XGBClassifier(
+            n_estimators=80 if for_box else 120,
+            max_depth=4 if for_box else 6,
+            learning_rate=0.1,
+            subsample=0.9,
+            colsample_bytree=0.9,
+            random_state=42,
+            eval_metric="logloss",
+            verbosity=0,
+        )
+    elif model_type == "lightgbm":
+        est = _ArrayLGBMClassifier(
+            n_estimators=80 if for_box else 120,
+            max_depth=6 if for_box else 8,
+            learning_rate=0.1,
+            class_weight="balanced",
+            random_state=42,
+            verbosity=-1,
+        )
     elif model_type == "random_forest":
         est = RandomForestClassifier(
             n_estimators=80 if for_box else 100,
@@ -261,6 +313,8 @@ def create_model(model_name: str, **kwargs: Any) -> SklearnPickingModel:
         "sklearn_knn": "knn",
         "sklearn_decision_tree": "decision_tree",
         "sklearn_dummy": "dummy",
+        "xgboost": "xgboost",
+        "lightgbm": "lightgbm",
     }
     if model_name not in model_types:
         raise ValueError(f"未知模型: {model_name}，可用模型: {', '.join(SUPPORTED_MODEL_NAMES)}")

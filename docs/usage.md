@@ -63,6 +63,8 @@ uv run python main.py train \
 - `sklearn_knn`
 - `sklearn_decision_tree`
 - `sklearn_dummy`
+- `xgboost`
+- `lightgbm`
 
 训练输出：
 
