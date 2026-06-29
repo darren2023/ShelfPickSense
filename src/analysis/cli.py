@@ -16,6 +16,7 @@ from analysis.feature_benchmark import load_feature_benchmark_plan, regenerate_f
 from analysis.features.selection import load_feature_selection
 from analysis.models import SUPPORTED_MODEL_NAMES
 from analysis.realtime import RealtimePickingPredictor
+from analysis.rule_baseline import RealtimeRulePredictor, evaluate_rule_baseline
 from analysis.train import train_model
 
 
@@ -89,6 +90,90 @@ def _cmd_eval(args: argparse.Namespace) -> int:
     print(json.dumps(report.to_dict(), ensure_ascii=False, indent=2))
     print(f"\n报告已保存: {out}")
     print(f"预测结果已保存: {predictions_out}")
+    return 0
+
+
+def _cmd_eval_rule(args: argparse.Namespace) -> int:
+    from analysis.benchmark import prediction_filename_for_records
+    from analysis.records import load_all_records
+
+    data_dir = Path(args.data_dir)
+    output_dir = Path(args.output)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    logger.info("开始规则基线评测: data_dir={}, output={}", data_dir, output_dir)
+
+    records = load_all_records(data_dir)
+    predictions_out = (
+        Path(args.predictions)
+        if args.predictions
+        else output_dir / prediction_filename_for_records(records)
+    )
+    report = evaluate_rule_baseline(
+        records,
+        data_dir=str(data_dir.resolve()),
+        predictions_output_path=predictions_out,
+    )
+    report_path = Path(args.report) if args.report else output_dir / "eval_report.json"
+    save_report(report, report_path)
+    logger.info(
+        "规则基线评测完成: macro_f1={:.4f}, picking_f1={:.4f}, recall={:.4f}, box_f1={:.4f}",
+        report.picking.macro_f1,
+        report.picking.f1,
+        report.picking.recall,
+        report.box.micro_f1,
+    )
+    print(json.dumps(report.to_dict(), ensure_ascii=False, indent=2))
+    print(f"\n报告已保存: {report_path}")
+    print(f"预测结果已保存: {predictions_out}")
+    return 0
+
+
+def _cmd_infer_rule(args: argparse.Namespace) -> int:
+    from analysis.records import load_record
+
+    record = load_record(Path(args.record_dir))
+    predictor = RealtimeRulePredictor.from_record_dir(
+        Path(args.record_dir),
+        infer_width=args.infer_width if args.infer_width is not None else record.infer_width,
+        infer_height=args.infer_height if args.infer_height is not None else record.infer_height,
+        video_fps=args.fps,
+    )
+
+    frames = record.frames()
+    if args.max_frames > 0:
+        frames = frames[: args.max_frames]
+    frame_interval = 1.0 / args.fps if args.realtime and args.fps > 0 else 0.0
+    logger.info(
+        "开始规则逐帧推理: record={}, video={}, frames={}, realtime={}, fps={}",
+        record.record_id,
+        args.video or "",
+        len(frames),
+        args.realtime,
+        args.fps,
+    )
+
+    out_file = None
+    if args.output:
+        out_path = Path(args.output)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_file = out_path.open("w", encoding="utf-8")
+
+    try:
+        for frame in frames:
+            pred = predictor.predict_frame(
+                frame.persons,
+                frame_idx=frame.frame_idx,
+                timestamp_sec=frame.timestamp_sec,
+            )
+            line = json.dumps(pred.to_dict(), ensure_ascii=False)
+            if out_file:
+                out_file.write(line + "\n")
+            print(line)
+            if frame_interval > 0:
+                time.sleep(frame_interval)
+    finally:
+        if out_file:
+            out_file.close()
     return 0
 
 
@@ -436,6 +521,14 @@ def build_parser() -> argparse.ArgumentParser:
     _add_logging_args(p_eval)
     p_eval.set_defaults(func=_cmd_eval)
 
+    p_eval_rule = sub.add_parser("eval-rule", help="用规则碰撞方法评测数据（无需训练模型）")
+    p_eval_rule.add_argument("--data-dir", required=True, help="评测数据目录")
+    p_eval_rule.add_argument("--output", required=True, help="评测结果输出目录")
+    p_eval_rule.add_argument("--report", default="", help="评测报告路径（默认 <output>/eval_report.json）")
+    p_eval_rule.add_argument("--predictions", default="", help="预测结果路径（默认 <output>/eval_predictions_*.json）")
+    _add_logging_args(p_eval_rule)
+    p_eval_rule.set_defaults(func=_cmd_eval_rule)
+
     p_cmp = sub.add_parser("compare", help="对比多份评测报告")
     p_cmp.add_argument("reports", nargs="+", help="eval_report.json 路径列表")
     _add_logging_args(p_cmp)
@@ -529,6 +622,18 @@ def build_parser() -> argparse.ArgumentParser:
     p_infer.add_argument("--output", default="", help="JSONL 输出文件路径")
     _add_logging_args(p_infer)
     p_infer.set_defaults(func=_cmd_infer_frame)
+
+    p_infer_rule = sub.add_parser("infer-rule", help="用规则碰撞方法模拟视频流逐帧推理")
+    p_infer_rule.add_argument("--record-dir", required=True, help="记录目录（读取 skeleton.parquet 和 annotation.json）")
+    p_infer_rule.add_argument("--video", default="", help="原始视频路径，仅用于日志标识")
+    p_infer_rule.add_argument("--infer-width", type=float, default=None, help="推理坐标宽度")
+    p_infer_rule.add_argument("--infer-height", type=float, default=None, help="推理坐标高度")
+    p_infer_rule.add_argument("--fps", type=float, default=25.0, help="模拟流帧率")
+    p_infer_rule.add_argument("--max-frames", type=int, default=0, help="最多推理帧数，0 表示全部")
+    p_infer_rule.add_argument("--realtime", action="store_true", help="按 fps sleep，模拟真实时间流")
+    p_infer_rule.add_argument("--output", default="", help="JSONL 输出文件路径")
+    _add_logging_args(p_infer_rule)
+    p_infer_rule.set_defaults(func=_cmd_infer_rule)
 
     return parser
 

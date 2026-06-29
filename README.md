@@ -36,6 +36,12 @@ uv run python main.py train --data-dir data/demo --output models/rf --model skle
 uv run python main.py eval --data-dir data/demo --model models/rf
 ```
 
+用规则碰撞方法评测（无需训练模型）：
+
+```bash
+uv run python main.py eval-rule --data-dir data/demo --output outputs/rule_baseline
+```
+
 批量运行多个模型进行对比：
 
 ```bash
@@ -88,6 +94,12 @@ uv run python main.py analyze-features --features-dir outputs/features --output 
 
 ```bash
 uv run python main.py infer-frame --model models/rf --record-dir data/demo --video demo.mp4 --output outputs/realtime.jsonl
+```
+
+用规则碰撞方法逐帧推理：
+
+```bash
+uv run python main.py infer-rule --record-dir data/demo/record_001 --output outputs/rule_stream.jsonl
 ```
 
 ## 文档

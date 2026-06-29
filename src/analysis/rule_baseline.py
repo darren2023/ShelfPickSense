@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
 from loguru import logger
 
+from analysis.annotation import build_box_index, load_annotation
 from analysis.evaluation import (
     ModelEvaluation,
     compute_box_metrics,
@@ -14,10 +16,209 @@ from analysis.evaluation import (
     save_predictions,
     save_report,
 )
-from analysis.records import RecordData
+from analysis.records import FramePersons, RecordData
 from analysis.rule_collision import CollisionParams, RuleCollisionProcessor, build_box_index_for_record
 
 RULE_BASELINE_NAME = "rule_baseline"
+
+
+@dataclass
+class RealtimeRulePrediction:
+    record_id: str
+    frame_idx: int
+    is_picking: bool
+    picking_prob: float
+    predicted_box_tokens: list[str]
+    rule_collisions: list[str]
+    rule_alarm_collisions: list[str]
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+def _frame_from_skeleton_data(
+    skeleton_data: dict[str, Any] | list[dict[str, Any]] | FramePersons,
+    *,
+    frame_idx: int | None,
+    timestamp_sec: float | None,
+) -> FramePersons:
+    if isinstance(skeleton_data, FramePersons):
+        return FramePersons(
+            frame_idx=int(frame_idx if frame_idx is not None else skeleton_data.frame_idx),
+            timestamp_sec=float(timestamp_sec if timestamp_sec is not None else skeleton_data.timestamp_sec),
+            persons=skeleton_data.persons,
+        )
+    if isinstance(skeleton_data, list):
+        return FramePersons(
+            frame_idx=int(frame_idx or 0),
+            timestamp_sec=float(timestamp_sec or 0.0),
+            persons=skeleton_data,
+        )
+
+    try:
+        resolved_frame_idx = int(
+            frame_idx
+            if frame_idx is not None
+            else skeleton_data.get("frame_idx") or skeleton_data.get("source_frame_idx") or 0
+        )
+    except (TypeError, ValueError):
+        resolved_frame_idx = 0
+    try:
+        resolved_timestamp = float(
+            timestamp_sec if timestamp_sec is not None else skeleton_data.get("timestamp_sec") or 0.0
+        )
+    except (TypeError, ValueError):
+        resolved_timestamp = 0.0
+
+    persons = skeleton_data.get("persons") or skeleton_data.get("skeletons")
+    if persons is None and "keypoints" in skeleton_data:
+        persons = [skeleton_data]
+    if not isinstance(persons, list):
+        persons = []
+    return FramePersons(
+        frame_idx=resolved_frame_idx,
+        timestamp_sec=resolved_timestamp,
+        persons=persons,
+    )
+
+
+def _prediction_from_processor_output(
+    *,
+    record_id: str,
+    frame_idx: int,
+    output: dict[str, Any],
+) -> RealtimeRulePrediction:
+    alarm_tokens = list(output.get("alarm_collisions") or [])
+    collision_tokens = list(output.get("collisions") or [])
+    is_picking = bool(alarm_tokens)
+    return RealtimeRulePrediction(
+        record_id=record_id,
+        frame_idx=frame_idx,
+        is_picking=is_picking,
+        picking_prob=1.0 if is_picking else 0.0,
+        predicted_box_tokens=alarm_tokens if is_picking else collision_tokens,
+        rule_collisions=collision_tokens,
+        rule_alarm_collisions=alarm_tokens,
+    )
+
+
+class RealtimeRulePredictor:
+    """逐帧规则碰撞推理，用法对齐 `RealtimePickingPredictor`。"""
+
+    def __init__(
+        self,
+        *,
+        annotation: dict[str, Any] | None = None,
+        annotation_path: Path | None = None,
+        infer_width: float | None = None,
+        infer_height: float | None = None,
+        record_id: str = "realtime",
+        video_fps: float = 25.0,
+        params: CollisionParams | None = None,
+    ) -> None:
+        self.record_id = record_id
+        self.video_fps = float(video_fps)
+        self.params = params
+        self.infer_width = float(infer_width or 0.0)
+        self.infer_height = float(infer_height or 0.0)
+        self._annotation: dict[str, Any] = {}
+        self._processor: RuleCollisionProcessor | None = None
+
+        if annotation is not None:
+            self.annotation = annotation
+        elif annotation_path is not None:
+            self.load_annotation(annotation_path)
+
+    @property
+    def annotation(self) -> dict[str, Any]:
+        return self._annotation
+
+    @annotation.setter
+    def annotation(self, data: dict[str, Any]) -> None:
+        if not isinstance(data, dict):
+            raise ValueError("annotation 必须是 dict")
+        self._annotation = data
+        self._rebuild_processor()
+
+    def set_infer_size(self, infer_width: float, infer_height: float) -> None:
+        self.infer_width = float(infer_width)
+        self.infer_height = float(infer_height)
+        self._rebuild_processor()
+
+    def load_annotation(
+        self,
+        annotation_path: Path,
+        *,
+        infer_width: float | None = None,
+        infer_height: float | None = None,
+    ) -> None:
+        if infer_width is not None and infer_height is not None:
+            self.set_infer_size(infer_width, infer_height)
+        self.annotation = load_annotation(Path(annotation_path))
+
+    @classmethod
+    def from_record_dir(
+        cls,
+        record_dir: Path,
+        *,
+        infer_width: float | None = None,
+        infer_height: float | None = None,
+        video_fps: float = 25.0,
+        params: CollisionParams | None = None,
+    ) -> RealtimeRulePredictor:
+        from analysis.records import load_record
+
+        record = load_record(Path(record_dir))
+        predictor = cls(
+            infer_width=float(infer_width if infer_width is not None else record.infer_width),
+            infer_height=float(infer_height if infer_height is not None else record.infer_height),
+            record_id=record.record_id,
+            video_fps=video_fps,
+            params=params,
+        )
+        predictor.annotation = record.annotation
+        return predictor
+
+    def predict_frame(
+        self,
+        skeleton_data: dict[str, Any] | list[dict[str, Any]] | FramePersons,
+        *,
+        frame_idx: int | None = None,
+        timestamp_sec: float | None = None,
+    ) -> RealtimeRulePrediction:
+        if self._processor is None:
+            raise RuntimeError("annotation 尚未设置，请赋值 predictor.annotation 或调用 load_annotation()")
+        frame = _frame_from_skeleton_data(
+            skeleton_data,
+            frame_idx=frame_idx,
+            timestamp_sec=timestamp_sec,
+        )
+        output = self._processor.process_frame(
+            frame_idx=frame.frame_idx,
+            persons=frame.persons,
+            timestamp_sec=frame.timestamp_sec,
+        )
+        return _prediction_from_processor_output(
+            record_id=self.record_id,
+            frame_idx=frame.frame_idx,
+            output=output,
+        )
+
+    def _rebuild_processor(self) -> None:
+        if not self._annotation or self.infer_width <= 0 or self.infer_height <= 0:
+            self._processor = None
+            return
+        box_index = build_box_index(
+            self._annotation,
+            infer_w=self.infer_width,
+            infer_h=self.infer_height,
+        )
+        self._processor = RuleCollisionProcessor(
+            box_index,
+            params=self.params,
+            video_fps=self.video_fps,
+        )
+        logger.debug("规则推理货框索引已更新: boxes={}", len(box_index))
 
 
 def predict_record_with_rules(
@@ -35,19 +236,12 @@ def predict_record_with_rules(
             persons=frame.persons,
             timestamp_sec=frame.timestamp_sec,
         )
-        alarm_tokens = list(output.get("alarm_collisions") or [])
-        collision_tokens = list(output.get("collisions") or [])
-        is_picking = bool(alarm_tokens)
         results.append(
-            {
-                "record_id": record.record_id,
-                "frame_idx": frame.frame_idx,
-                "is_picking": is_picking,
-                "picking_prob": 1.0 if is_picking else 0.0,
-                "predicted_box_tokens": alarm_tokens if is_picking else collision_tokens,
-                "rule_collisions": collision_tokens,
-                "rule_alarm_collisions": alarm_tokens,
-            }
+            _prediction_from_processor_output(
+                record_id=record.record_id,
+                frame_idx=frame.frame_idx,
+                output=output,
+            ).to_dict()
         )
     return results
 

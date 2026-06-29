@@ -286,6 +286,87 @@ uv run python main.py eval \
 - `predicted_box_tokens`
 - `box_exact_match`
 
+## 规则推理与评测
+
+规则方法无需训练模型，只需 `annotation.json`（货框 ROI）和每帧骨架。报警由 M-of-N 门控后的 `alarm_collisions` 决定。
+
+### 评测规则基线（eval-rule）
+
+与 `eval` 用法类似，但走规则碰撞引擎：
+
+```bash
+uv run python main.py eval-rule \
+  --data-dir data/demo \
+  --output outputs/rule_baseline
+```
+
+默认输出：
+
+```text
+outputs/rule_baseline/
+  eval_report.json
+  eval_predictions_<record_name>.json
+```
+
+自定义报告与预测路径：
+
+```bash
+uv run python main.py eval-rule \
+  --data-dir data/demo \
+  --output outputs/rule_baseline \
+  --report outputs/rule_report.json \
+  --predictions outputs/rule_predictions.json
+```
+
+预测 JSON 在 ML 评测字段基础上，额外包含：
+
+- `rule_collisions`：当前帧瞬时碰撞货框
+- `rule_alarm_collisions`：门控后的报警货框
+
+### 逐帧规则推理（infer-rule）
+
+用记录目录中的骨架回放规则推理，用法对齐 `infer-frame`：
+
+```bash
+uv run python main.py infer-rule \
+  --record-dir data/demo/record_001 \
+  --output outputs/rule_stream.jsonl
+```
+
+每行 JSON 包含：
+
+- `is_picking`：是否触发报警
+- `predicted_box_tokens`：报警货框（未报警时为瞬时碰撞货框）
+- `rule_collisions` / `rule_alarm_collisions`
+
+### Python API（外部集成）
+
+批量推理：
+
+```python
+from pathlib import Path
+from analysis.records import load_all_records
+from analysis.rule_baseline import predict_record_with_rules, evaluate_rule_baseline
+
+records = load_all_records(Path("data/demo"))
+preds = predict_record_with_rules(records[0])
+report = evaluate_rule_baseline(records, data_dir="data/demo")
+```
+
+实时逐帧（需保持同一 predictor 实例以保留 M-of-N 状态）：
+
+```python
+from analysis.rule_baseline import RealtimeRulePredictor
+
+predictor = RealtimeRulePredictor.from_record_dir("data/demo/record_001")
+pred = predictor.predict_frame(
+    skeleton_persons,   # list[dict]，每人含 keypoints
+    frame_idx=120,
+    timestamp_sec=4.8,
+)
+print(pred.is_picking, pred.rule_alarm_collisions)
+```
+
 ## 评测指标
 
 帧级取货检测指标：

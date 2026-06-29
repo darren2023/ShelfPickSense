@@ -51,3 +51,32 @@ def test_benchmark_includes_rule_baseline(tmp_path: Path):
     report_md = (output_dir / "benchmark_report.md").read_text(encoding="utf-8")
     assert "## 规则基线" in report_md
     assert RULE_BASELINE_NAME in report_md
+
+
+def test_cli_eval_rule(tmp_path: Path):
+    from analysis.cli import main
+
+    fixture_dir = make_fixture_record(tmp_path / "record_001")
+    output_dir = tmp_path / "rule_eval"
+    assert main(["eval-rule", "--data-dir", str(fixture_dir), "--output", str(output_dir)]) == 0
+    assert (output_dir / "eval_report.json").is_file()
+    assert any(output_dir.glob("eval_predictions*.json"))
+
+
+def test_realtime_rule_predictor(tmp_path: Path):
+    from analysis.records import load_record
+    from analysis.rule_baseline import RealtimeRulePredictor
+
+    fixture_dir = make_fixture_record(tmp_path / "record_001")
+    predictor = RealtimeRulePredictor.from_record_dir(fixture_dir)
+    record = load_record(fixture_dir)
+    preds = [
+        predictor.predict_frame(
+            frame.persons,
+            frame_idx=frame.frame_idx,
+            timestamp_sec=frame.timestamp_sec,
+        )
+        for frame in record.frames()
+    ]
+    assert len(preds) == len(record.frames())
+    assert any(p.is_picking for p in preds)
