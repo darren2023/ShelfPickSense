@@ -14,6 +14,8 @@ def _pt(keypoints: list, idx: int) -> tuple[float, float, float] | None:
     kp = keypoints[idx]
     if not isinstance(kp, (list, tuple)) or len(kp) < 2:
         return None
+    if kp[0] is None or kp[1] is None:
+        return None
     x, y = float(kp[0]), float(kp[1])
     if x != x or y != y:  # NaN check without math dependency on None
         return None

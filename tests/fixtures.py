@@ -8,6 +8,36 @@ from pathlib import Path
 import pandas as pd
 
 
+def make_fixture_record_with_empty_skeleton_frames(output_dir: Path, *, empty_frame_indices: list[int]) -> Path:
+    """在标准 fixture 上追加若干无骨架帧。"""
+    output_dir = make_fixture_record(output_dir)
+    import pandas as pd
+
+    skeleton_path = output_dir / "skeleton.parquet"
+    df = pd.read_parquet(skeleton_path)
+    extra_rows: list[dict] = []
+    for fi in empty_frame_indices:
+        row = {
+            "frame_idx": fi,
+            "source_frame_idx": fi,
+            "timestamp_sec": fi / 25.0,
+            "person_id": 0,
+            "person_track_id": 1,
+            "bbox_x1": 40.0,
+            "bbox_y1": 40.0,
+            "bbox_x2": 420.0,
+            "bbox_y2": 420.0,
+        }
+        for i in range(17):
+            row[f"kpt_{i}_x"] = None
+            row[f"kpt_{i}_y"] = None
+            row[f"kpt_{i}_score"] = None
+        extra_rows.append(row)
+    if extra_rows:
+        pd.concat([df, pd.DataFrame(extra_rows)], ignore_index=True).to_parquet(skeleton_path, index=False)
+    return output_dir
+
+
 def make_fixture_record(output_dir: Path) -> Path:
     """生成一条可训练/评测的合成记录。"""
     output_dir = Path(output_dir)

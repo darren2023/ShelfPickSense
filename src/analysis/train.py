@@ -9,7 +9,7 @@ from pathlib import Path
 
 from loguru import logger
 
-from analysis.dataset import Dataset, build_dataset
+from analysis.dataset import Dataset, build_dataset, filter_empty_skeleton_frames
 from analysis.features.registry import FeatureRegistry, default_registry
 from analysis.features.selection import FeatureSelection
 from analysis.models import SklearnPickingModel, create_model
@@ -26,6 +26,7 @@ class TrainResult:
     positive_frames: int
     box_samples: int
     trained_at: str
+    skipped_empty_skeleton_frames: int = 0
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -38,6 +39,7 @@ def train_model(
     model_name: str = "sklearn_rf",
     registry: FeatureRegistry | None = None,
     feature_selection: FeatureSelection | None = None,
+    filter_empty_skeleton: bool = True,
 ) -> TrainResult:
     data_dir = Path(data_dir)
     output_dir = Path(output_dir)
@@ -47,6 +49,16 @@ def train_model(
     reg = registry or default_registry()
     logger.debug("开始构建训练样本")
     dataset = build_dataset(records, reg, feature_selection=feature_selection)
+    skipped = 0
+    if filter_empty_skeleton:
+        dataset, skipped = filter_empty_skeleton_frames(dataset, records)
+        if skipped:
+            logger.info(
+                "已过滤无骨架帧: removed={}, kept_frames={}, positive_frames={}",
+                skipped,
+                dataset.frame_count,
+                dataset.positive_frame_count,
+            )
     logger.info(
         "训练样本构建完成: frames={}, positive_frames={}, box_samples={}",
         dataset.frame_count,
@@ -60,6 +72,7 @@ def train_model(
         data_dir=data_dir,
         output_dir=output_dir,
         model_name=model_name,
+        skipped_empty_skeleton_frames=skipped,
     )
     return result
 
@@ -71,6 +84,7 @@ def train_model_from_dataset(
     data_dir: Path,
     output_dir: Path,
     model_name: str = "sklearn_rf",
+    skipped_empty_skeleton_frames: int = 0,
 ) -> tuple[TrainResult, SklearnPickingModel]:
     """使用已构建的数据集训练模型，供 benchmark 复用数据处理结果。"""
     data_dir = Path(data_dir)
@@ -91,6 +105,7 @@ def train_model_from_dataset(
         positive_frames=dataset.positive_frame_count,
         box_samples=len(dataset.box_samples),
         trained_at=datetime.now(timezone.utc).isoformat(),
+        skipped_empty_skeleton_frames=skipped_empty_skeleton_frames,
     )
     (output_dir / "train_result.json").write_text(
         json.dumps(result.to_dict(), ensure_ascii=False, indent=2),

@@ -53,13 +53,15 @@ def _cmd_train(args: argparse.Namespace) -> int:
         Path(args.output),
         model_name=args.model,
         feature_selection=load_feature_selection(args.feature_config),
+        filter_empty_skeleton=not args.keep_empty_skeleton_frames,
     )
     logger.info(
-        "训练完成: model={}, frames={}, positive_frames={}, box_samples={}",
+        "训练完成: model={}, frames={}, positive_frames={}, box_samples={}, skipped_empty_skeleton={}",
         result.model_name,
         result.frame_count,
         result.positive_frames,
         result.box_samples,
+        result.skipped_empty_skeleton_frames,
     )
     print(json.dumps(result.to_dict(), ensure_ascii=False, indent=2))
     return 0
@@ -131,6 +133,7 @@ def _cmd_benchmark(args: argparse.Namespace) -> int:
         model_names=args.models,
         jobs=args.jobs,
         feature_selection=load_feature_selection(args.feature_config),
+        filter_empty_skeleton=not args.keep_empty_skeleton_frames,
     )
     logger.info("benchmark 完成: models={}, output={}", len(result.model_names), result.output_dir)
     print(json.dumps(result.comparison, ensure_ascii=False, indent=2))
@@ -417,6 +420,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="模型类型",
     )
     p_train.add_argument("--feature-config", default="", help="特征选择 JSON 配置路径（默认使用全部特征）")
+    p_train.add_argument(
+        "--keep-empty-skeleton-frames",
+        action="store_true",
+        help="保留无骨架帧参与训练（默认在特征提取后过滤无骨架帧）",
+    )
     _add_logging_args(p_train)
     p_train.set_defaults(func=_cmd_train)
 
@@ -450,6 +458,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_bench.add_argument("--jobs", type=int, default=8, help="并行运行的模型数量（默认 8）")
     p_bench.add_argument("--feature-config", default="", help="特征选择 JSON 配置路径（默认使用全部特征）")
+    p_bench.add_argument(
+        "--keep-empty-skeleton-frames",
+        action="store_true",
+        help="保留无骨架帧参与训练（默认在特征提取后过滤无骨架帧）",
+    )
     _add_logging_args(p_bench)
     p_bench.set_defaults(func=_cmd_benchmark)
 

@@ -11,7 +11,7 @@ from typing import Any
 
 from loguru import logger
 
-from analysis.dataset import build_dataset
+from analysis.dataset import build_dataset, filter_empty_skeleton_frames
 from analysis.evaluation import Evaluator, ModelEvaluation, compare_reports_with_baseline, save_report
 from analysis.rule_baseline import RULE_BASELINE_NAME, run_rule_baseline
 from analysis.features.registry import default_registry
@@ -78,6 +78,7 @@ def run_benchmark(
     eval_data_dir: Path | None = None,
     jobs: int = 1,
     feature_selection: FeatureSelection | None = None,
+    filter_empty_skeleton: bool = True,
 ) -> BenchmarkResult:
     """批量训练多个模型，并在同一评测集上生成对比结果。"""
     train_data_dir = Path(train_data_dir)
@@ -100,6 +101,16 @@ def run_benchmark(
     train_records = load_all_records(train_data_dir)
     logger.info("benchmark 构建训练数据集")
     train_dataset = build_dataset(train_records, registry, feature_selection=feature_selection)
+    skipped_skeleton = 0
+    if filter_empty_skeleton:
+        train_dataset, skipped_skeleton = filter_empty_skeleton_frames(train_dataset, train_records)
+        if skipped_skeleton:
+            logger.info(
+                "benchmark 已过滤无骨架训练帧: removed={}, kept_frames={}, positive_frames={}",
+                skipped_skeleton,
+                train_dataset.frame_count,
+                train_dataset.positive_frame_count,
+            )
     logger.info(
         "benchmark 训练数据集就绪: records={}, frames={}, positive_frames={}, box_samples={}",
         len(train_records),
@@ -135,6 +146,7 @@ def run_benchmark(
                 data_dir=train_data_dir,
                 output_dir=model_dir,
                 model_name=model_name,
+                skipped_empty_skeleton_frames=skipped_skeleton,
             )
             report = evaluator.evaluate(
                 model,
