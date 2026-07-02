@@ -7,6 +7,7 @@ import json
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 from loguru import logger
 
@@ -21,7 +22,7 @@ from analysis.train import train_model
 
 
 def configure_logging(args: argparse.Namespace) -> None:
-    """配置 loguru。日志默认写 stderr，保留 stdout 给 JSON 结果。"""
+    """配置 loguru，默认输出到 stderr。"""
     level = str(getattr(args, "log_level", "INFO") or "INFO").upper()
     logger.remove()
     logger.add(
@@ -39,6 +40,16 @@ def configure_logging(args: argparse.Namespace) -> None:
             encoding="utf-8",
             format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {name}:{function}:{line} | {message}",
         )
+
+
+def _log_json(data: Any, *, indent: int = 2) -> None:
+    """输出 JSON 结果（raw 模式，不带 loguru 前缀）。"""
+    logger.opt(raw=True).info(json.dumps(data, ensure_ascii=False, indent=indent) + "\n")
+
+
+def _log_jsonl(line: str) -> None:
+    """输出单行 JSON（用于 infer 流式结果）。"""
+    logger.opt(raw=True).info(line + "\n")
 
 
 def _cmd_train(args: argparse.Namespace) -> int:
@@ -64,7 +75,7 @@ def _cmd_train(args: argparse.Namespace) -> int:
         result.box_samples,
         result.skipped_empty_skeleton_frames,
     )
-    print(json.dumps(result.to_dict(), ensure_ascii=False, indent=2))
+    _log_json(result.to_dict())
     return 0
 
 
@@ -87,9 +98,9 @@ def _cmd_eval(args: argparse.Namespace) -> int:
         report.picking.precision,
         report.box.micro_f1,
     )
-    print(json.dumps(report.to_dict(), ensure_ascii=False, indent=2))
-    print(f"\n报告已保存: {out}")
-    print(f"预测结果已保存: {predictions_out}")
+    _log_json(report.to_dict())
+    logger.info("报告已保存: {}", out)
+    logger.info("预测结果已保存: {}", predictions_out)
     return 0
 
 
@@ -122,9 +133,9 @@ def _cmd_eval_rule(args: argparse.Namespace) -> int:
         report.picking.recall,
         report.box.micro_f1,
     )
-    print(json.dumps(report.to_dict(), ensure_ascii=False, indent=2))
-    print(f"\n报告已保存: {report_path}")
-    print(f"预测结果已保存: {predictions_out}")
+    _log_json(report.to_dict())
+    logger.info("报告已保存: {}", report_path)
+    logger.info("预测结果已保存: {}", predictions_out)
     return 0
 
 
@@ -168,7 +179,7 @@ def _cmd_infer_rule(args: argparse.Namespace) -> int:
             line = json.dumps(pred.to_dict(), ensure_ascii=False)
             if out_file:
                 out_file.write(line + "\n")
-            print(line)
+            _log_jsonl(line)
             if frame_interval > 0:
                 time.sleep(frame_interval)
     finally:
@@ -198,7 +209,7 @@ def _cmd_compare(args: argparse.Namespace) -> int:
         )
     rows = compare_reports(reports)
     logger.info("对比完成: count={}", len(rows))
-    print(json.dumps(rows, ensure_ascii=False, indent=2))
+    _log_json(rows)
     return 0
 
 
@@ -221,8 +232,8 @@ def _cmd_benchmark(args: argparse.Namespace) -> int:
         filter_empty_skeleton=not args.keep_empty_skeleton_frames,
     )
     logger.info("benchmark 完成: models={}, output={}", len(result.model_names), result.output_dir)
-    print(json.dumps(result.comparison, ensure_ascii=False, indent=2))
-    print(f"\n批量对比报告已保存: {Path(args.output) / 'benchmark_summary.json'}")
+    _log_json(result.comparison)
+    logger.info("批量对比报告已保存: {}", Path(args.output) / "benchmark_summary.json")
     return 0
 
 
@@ -269,9 +280,9 @@ def _cmd_benchmark_features(args: argparse.Namespace) -> int:
         }
         for item in result.sets
     ]
-    print(json.dumps(summary, ensure_ascii=False, indent=2))
-    print(f"\n多特征 benchmark 汇总已保存: {result.summary_path}")
-    print(f"多特征 benchmark 报告已保存: {result.report_path}")
+    _log_json(summary)
+    logger.info("多特征 benchmark 汇总已保存: {}", result.summary_path)
+    logger.info("多特征 benchmark 报告已保存: {}", result.report_path)
     return 0
 
 
@@ -378,11 +389,11 @@ def _cmd_export_features(args: argparse.Namespace) -> int:
         meta["box_sample_count"],
         out_dir,
     )
-    print(json.dumps(meta, ensure_ascii=False, indent=2))
+    _log_json(meta)
     for output_format, paths in output_files.items():
-        print(f"\n{output_format} 帧级特征已保存: {paths['frame_features_path']}")
-        print(f"{output_format} 货框特征已保存: {paths['box_features_path']}")
-    print(f"特征元数据已保存: {meta_path}")
+        logger.info("{} 帧级特征已保存: {}", output_format, paths["frame_features_path"])
+        logger.info("{} 货框特征已保存: {}", output_format, paths["box_features_path"])
+    logger.info("特征元数据已保存: {}", meta_path)
     return 0
 
 
@@ -423,8 +434,8 @@ def _cmd_analyze_features(args: argparse.Namespace) -> int:
         result.box_sample_count,
         result.output_dir,
     )
-    print(json.dumps(result.to_dict(), ensure_ascii=False, indent=2))
-    print(f"\n相关性分析结果已保存: {result.output_dir}")
+    _log_json(result.to_dict())
+    logger.info("相关性分析结果已保存: {}", result.output_dir)
     return 0
 
 
@@ -469,7 +480,7 @@ def _cmd_infer_frame(args: argparse.Namespace) -> int:
             line = json.dumps(pred.to_dict(), ensure_ascii=False)
             if out_file:
                 out_file.write(line + "\n")
-            print(line)
+            _log_jsonl(line)
             if frame_interval > 0:
                 time.sleep(frame_interval)
     finally:
