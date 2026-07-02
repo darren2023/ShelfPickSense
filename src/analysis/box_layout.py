@@ -308,6 +308,24 @@ def load_box_layout_rows(annotation_path: Path) -> list[BoxLayoutRow]:
     return list_box_layout_rows(load_annotation(annotation_path))
 
 
+def resolve_box_tokens_by_layout(
+    layout: dict[str, BoxNumericCode],
+    *,
+    layer: int,
+    column: int,
+    shelf_side: int | None = None,
+) -> list[str]:
+    """按几何推导的层/列（及可选货架侧）匹配货框 token。"""
+    tokens: list[str] = []
+    for token, code in layout.items():
+        if int(code.layer) != int(layer) or int(code.column) != int(column):
+            continue
+        if shelf_side is not None and int(code.shelf_side) != int(shelf_side):
+            continue
+        tokens.append(token)
+    return sorted(tokens)
+
+
 def normalize_box_token(token: str) -> str:
     return str(token or "").strip()
 

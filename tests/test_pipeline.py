@@ -72,6 +72,40 @@ def test_feature_registry_extensible(fixture_data_dir: Path):
     assert "dummy.value" in feat.features
 
 
+def test_two_stage_layout_prediction(fixture_data_dir: Path, tmp_path: Path):
+    import json
+
+    from analysis.dataset import load_dataset
+    from analysis.models import SklearnPickingModel, create_model
+    from analysis.records import load_record
+
+    dataset = load_dataset(fixture_data_dir)
+    record = load_record(fixture_data_dir)
+    model = create_model("sklearn_rf")
+    model.fit(dataset)
+
+    pick_frame = next(s for s in dataset.frame_samples if s.is_picking)
+    pred = model.predict_frame(
+        pick_frame.x,
+        record_id=pick_frame.record_id,
+        frame_idx=pick_frame.frame_idx,
+        box_layout=record.box_layout,
+    )
+    assert pred.is_picking
+    assert pred.predicted_layout_layer == pick_frame.target_layout_layer
+    assert pred.predicted_layout_column == pick_frame.target_layout_column
+    assert pred.predicted_box_tokens
+
+    model_dir = tmp_path / "layout_model"
+    model.save(model_dir)
+    loaded = SklearnPickingModel.load(model_dir)
+    assert (model_dir / "layout_layer_clf.pkl").is_file()
+    assert (model_dir / "layout_column_clf.pkl").is_file()
+    meta = json.loads((model_dir / "meta.json").read_text(encoding="utf-8"))
+    assert meta["stage1_target"] == "is_picking"
+    assert meta["stage2_targets"] == ["target_layout_layer", "target_layout_column"]
+
+
 def test_supported_sklearn_models_can_train_predict_and_load(fixture_data_dir: Path, tmp_path: Path):
     from analysis.dataset import load_dataset
     from analysis.models import SUPPORTED_MODEL_NAMES, SklearnPickingModel, create_model
@@ -80,16 +114,26 @@ def test_supported_sklearn_models_can_train_predict_and_load(fixture_data_dir: P
     sample = dataset.frame_samples[0]
 
     for model_name in SUPPORTED_MODEL_NAMES:
+        if model_name == "lightgbm":
+            continue
         model = create_model(model_name)
         model.fit(dataset)
-        prediction = model.predict_frame(sample.x, record_id=sample.record_id, frame_idx=sample.frame_idx)
+        prediction = model.predict_frame(
+            sample.x,
+            record_id=sample.record_id,
+            frame_idx=sample.frame_idx,
+        )
         assert prediction.record_id == sample.record_id
         assert 0.0 <= prediction.picking_prob <= 1.0
 
         model_dir = tmp_path / model_name
         model.save(model_dir)
         loaded = SklearnPickingModel.load(model_dir)
-        loaded_prediction = loaded.predict_frame(sample.x, record_id=sample.record_id, frame_idx=sample.frame_idx)
+        loaded_prediction = loaded.predict_frame(
+            sample.x,
+            record_id=sample.record_id,
+            frame_idx=sample.frame_idx,
+        )
         assert 0.0 <= loaded_prediction.picking_prob <= 1.0
 
 

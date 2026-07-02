@@ -167,13 +167,12 @@ def predict_record(
     for frame in frames if frames is not None else record.frames():
         frame_feat = reg.extract_frame_features(record, frame)
         x = frame_feat.to_vector(model.frame_feature_names)
-        pred = model.predict_frame(x, record_id=record.record_id, frame_idx=frame.frame_idx)
-
-        box_tokens: list[str] = []
-        if pred.is_picking and model.box_clf is not None and model.box_feature_names:
-            per_box = reg.extract_per_box_features(record, frame)
-            box_inputs = [(pb.box_token, pb.to_vector(model.box_feature_names)) for pb in per_box]
-            box_tokens = model.predict_boxes_for_frame(box_inputs)
+        pred = model.predict_frame(
+            x,
+            record_id=record.record_id,
+            frame_idx=frame.frame_idx,
+            box_layout=record.box_layout,
+        )
 
         results.append(
             {
@@ -181,7 +180,9 @@ def predict_record(
                 "frame_idx": frame.frame_idx,
                 "is_picking": pred.is_picking,
                 "picking_prob": pred.picking_prob,
-                "predicted_box_tokens": box_tokens,
+                "predicted_layout_layer": pred.predicted_layout_layer,
+                "predicted_layout_column": pred.predicted_layout_column,
+                "predicted_box_tokens": list(pred.predicted_box_tokens),
             }
         )
     return results
@@ -226,6 +227,11 @@ class Evaluator:
                 pred_is_picking = bool(pred.get("is_picking"))
                 true_box_tokens = list(label.confirmed_box_tokens)
                 pred_box_tokens = list(pred.get("predicted_box_tokens") or [])
+                true_side, true_layer, true_col = 0, 0, 0
+                if label.confirmed_box_tokens:
+                    entry = record.box_layout.get(label.confirmed_box_tokens[0])
+                    if entry is not None:
+                        true_side, true_layer, true_col = entry.shelf_side, entry.layer, entry.column
                 y_true.append(true_is_picking)
                 y_pred.append(pred_is_picking)
 
@@ -236,6 +242,16 @@ class Evaluator:
                         "true_is_picking": true_is_picking,
                         "pred_is_picking": pred_is_picking,
                         "picking_prob": float(pred.get("picking_prob") or 0.0),
+                        "true_layout_layer": true_layer if true_is_picking else 0,
+                        "true_layout_column": true_col if true_is_picking else 0,
+                        "pred_layout_layer": int(pred.get("predicted_layout_layer") or 0),
+                        "pred_layout_column": int(pred.get("predicted_layout_column") or 0),
+                        "layout_layer_match": (
+                            true_is_picking and int(pred.get("predicted_layout_layer") or 0) == true_layer
+                        ),
+                        "layout_column_match": (
+                            true_is_picking and int(pred.get("predicted_layout_column") or 0) == true_col
+                        ),
                         "true_box_tokens": true_box_tokens,
                         "predicted_box_tokens": pred_box_tokens,
                         "box_exact_match": set(true_box_tokens) == set(pred_box_tokens),

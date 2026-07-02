@@ -209,6 +209,16 @@ def test_list_box_layout_rows_includes_centroid():
     assert bottom_left.to_dict()["token"] == "82:2013"
 
 
+def test_resolve_box_tokens_by_layout():
+    from analysis.box_layout import BoxNumericCode, resolve_box_tokens_by_layout
+
+    layout = {
+        "S1:A1": BoxNumericCode(shelf_side=1, layer=1, column=2, shelf_code="S1", box_id="A1", token="S1:A1"),
+        "S1:A2": BoxNumericCode(shelf_side=1, layer=1, column=1, shelf_code="S1", box_id="A2", token="S1:A2"),
+    }
+    assert resolve_box_tokens_by_layout(layout, layer=1, column=2) == ["S1:A1"]
+
+
 def test_load_record_enriches_box_codes(tmp_path: Path):
     from analysis.records import load_record
     from fixtures import make_fixture_record

@@ -4,13 +4,15 @@ from __future__ import annotations
 
 from analysis.features.base import FeatureContext, FeatureExtractor
 from analysis.features.spatial import wrist_hit_box_for_person
-from analysis.features.tracking import (    CONSECUTIVE_HIT_WINDOWS,
+from analysis.features.tracking import (
+    CONSECUTIVE_HIT_WINDOWS,
     HAND_MOVE_OFFSETS,
     LEFT_WRIST,
     MAX_PERSON_SLOTS,
     RIGHT_WRIST,
     empty_person_slot_features,
     find_person_by_track,
+    foot_position_features,
     person_track_id,
     select_primary_track_id,
     side_movement_norm,
@@ -60,6 +62,8 @@ class TemporalFeatureExtractor(FeatureExtractor):
                 ctx, track_id=primary_track, side=RIGHT_WRIST, offset=offset
             )
 
+        out.update(foot_position_features(ctx, track_id=primary_track))
+
         persons = sorted_persons(ctx.frame)
         for slot in range(MAX_PERSON_SLOTS):
             prefix = f"p{slot}"
@@ -81,6 +85,7 @@ class TemporalFeatureExtractor(FeatureExtractor):
                 out[f"{prefix}_right_wrist_move_{offset}"] = side_movement_norm(
                     ctx, track_id=track_id, side=RIGHT_WRIST, offset=offset
                 )
+            out.update(foot_position_features(ctx, track_id=track_id, prefix=prefix))
 
         max_streak = 0
         for person in ctx.frame.persons:

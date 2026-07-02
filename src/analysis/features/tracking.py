@@ -20,6 +20,7 @@ MIN_KEYPOINT_SCORE = 0.3
 MAX_PERSON_SLOTS = 3
 CONSECUTIVE_HIT_WINDOWS = (3, 5, 7)
 HAND_MOVE_OFFSETS = (1, 3, 5, 7)
+FOOT_MOVE_OFFSETS = (1, 2, 3, 5, 7)
 
 LEFT_WRIST = "left_wrist"
 RIGHT_WRIST = "right_wrist"
@@ -184,6 +185,122 @@ def _wrist_confidence(person: dict[str, Any]) -> float:
     return max(scores) if scores else 0.0
 
 
+def foot_avg_point(person: dict[str, Any] | None) -> tuple[float, float] | None:
+    """左右脚（踝点）平均坐标；仅一侧可见时退回该侧。"""
+    if person is None:
+        return None
+    left = get_side_point(person, LEFT_FOOT)
+    right = get_side_point(person, RIGHT_FOOT)
+    if left is not None and right is not None:
+        return (left[0] + right[0]) / 2.0, (left[1] + right[1]) / 2.0
+    return left if left is not None else right
+
+
+def _movement_scale(ctx: FeatureContext) -> float:
+    return max(ctx.record.infer_width, ctx.record.infer_height, 1.0)
+
+
+def side_movement_components(
+    ctx: FeatureContext,
+    *,
+    track_id: int | None,
+    side: str,
+    offset: int,
+) -> tuple[float, float, float]:
+    """同一 track 指定侧别相对前 offset 帧的 (dx, dy, dist)，均除以画面尺度。"""
+    if offset <= 0:
+        return 0.0, 0.0, 0.0
+    cur_person = find_person_by_track(ctx.frame, track_id)
+    if cur_person is None:
+        return 0.0, 0.0, 0.0
+    cur = get_side_point(cur_person, side)
+    if cur is None:
+        return 0.0, 0.0, 0.0
+
+    prev_person = tracked_person_at_offset(ctx, track_id, offset)
+    if prev_person is None:
+        return 0.0, 0.0, 0.0
+    prev = get_side_point(prev_person, side)
+    if prev is None:
+        return 0.0, 0.0, 0.0
+
+    scale = _movement_scale(ctx)
+    dx = (cur[0] - prev[0]) / scale
+    dy = (cur[1] - prev[1]) / scale
+    dist = math.hypot(cur[0] - prev[0], cur[1] - prev[1]) / scale
+    return dx, dy, dist
+
+
+def foot_avg_movement_components(
+    ctx: FeatureContext,
+    *,
+    track_id: int | None,
+    offset: int,
+) -> tuple[float, float, float]:
+    """双脚平均点相对前 offset 帧的 (dx, dy, dist)。"""
+    if offset <= 0:
+        return 0.0, 0.0, 0.0
+    cur_person = find_person_by_track(ctx.frame, track_id)
+    cur = foot_avg_point(cur_person)
+    if cur is None:
+        return 0.0, 0.0, 0.0
+
+    prev_person = tracked_person_at_offset(ctx, track_id, offset)
+    prev = foot_avg_point(prev_person)
+    if prev is None:
+        return 0.0, 0.0, 0.0
+
+    scale = _movement_scale(ctx)
+    dx = (cur[0] - prev[0]) / scale
+    dy = (cur[1] - prev[1]) / scale
+    dist = math.hypot(cur[0] - prev[0], cur[1] - prev[1]) / scale
+    return dx, dy, dist
+
+
+def foot_position_features(
+    ctx: FeatureContext,
+    *,
+    track_id: int | None,
+    prefix: str = "",
+) -> dict[str, float]:
+    """左脚/右脚/平均脚归一化坐标及相对前 n 帧位移特征。"""
+    key_prefix = f"{prefix}_" if prefix else ""
+    out: dict[str, float] = {}
+    scale = _movement_scale(ctx)
+    person = find_person_by_track(ctx.frame, track_id)
+
+    for label, point_fn in (
+        ("left_foot", lambda p: get_side_point(p, LEFT_FOOT) if p else None),
+        ("right_foot", lambda p: get_side_point(p, RIGHT_FOOT) if p else None),
+        ("foot_avg", foot_avg_point),
+    ):
+        pt = point_fn(person)
+        out[f"{key_prefix}{label}_x_norm"] = pt[0] / scale if pt else 0.0
+        out[f"{key_prefix}{label}_y_norm"] = pt[1] / scale if pt else 0.0
+
+    for offset in FOOT_MOVE_OFFSETS:
+        dx, dy, dist = side_movement_components(
+            ctx, track_id=track_id, side=LEFT_FOOT, offset=offset
+        )
+        out[f"{key_prefix}left_foot_dx_{offset}"] = dx
+        out[f"{key_prefix}left_foot_dy_{offset}"] = dy
+        out[f"{key_prefix}left_foot_dist_{offset}"] = dist
+
+        dx, dy, dist = side_movement_components(
+            ctx, track_id=track_id, side=RIGHT_FOOT, offset=offset
+        )
+        out[f"{key_prefix}right_foot_dx_{offset}"] = dx
+        out[f"{key_prefix}right_foot_dy_{offset}"] = dy
+        out[f"{key_prefix}right_foot_dist_{offset}"] = dist
+
+        dx, dy, dist = foot_avg_movement_components(ctx, track_id=track_id, offset=offset)
+        out[f"{key_prefix}foot_avg_dx_{offset}"] = dx
+        out[f"{key_prefix}foot_avg_dy_{offset}"] = dy
+        out[f"{key_prefix}foot_avg_dist_{offset}"] = dist
+
+    return out
+
+
 def side_movement_norm(
     ctx: FeatureContext,
     *,
@@ -208,8 +325,22 @@ def side_movement_norm(
     if prev is None:
         return 0.0
 
-    scale = max(ctx.record.infer_width, ctx.record.infer_height, 1.0)
+    scale = _movement_scale(ctx)
     return math.hypot(cur[0] - prev[0], cur[1] - prev[1]) / scale
+
+
+def _empty_foot_features(prefix: str = "") -> dict[str, float]:
+    key_prefix = f"{prefix}_" if prefix else ""
+    feats: dict[str, float] = {}
+    for label in ("left_foot", "right_foot", "foot_avg"):
+        feats[f"{key_prefix}{label}_x_norm"] = 0.0
+        feats[f"{key_prefix}{label}_y_norm"] = 0.0
+    for offset in FOOT_MOVE_OFFSETS:
+        for label in ("left_foot", "right_foot", "foot_avg"):
+            feats[f"{key_prefix}{label}_dx_{offset}"] = 0.0
+            feats[f"{key_prefix}{label}_dy_{offset}"] = 0.0
+            feats[f"{key_prefix}{label}_dist_{offset}"] = 0.0
+    return feats
 
 
 def empty_person_slot_features(slot: int) -> dict[str, float]:
@@ -220,4 +351,5 @@ def empty_person_slot_features(slot: int) -> dict[str, float]:
     for side in (LEFT_WRIST, RIGHT_WRIST):
         for offset in HAND_MOVE_OFFSETS:
             feats[f"{prefix}_{side}_move_{offset}"] = 0.0
+    feats.update(_empty_foot_features(prefix))
     return feats

@@ -70,6 +70,54 @@ def test_spatial_wrist_and_foot_distance(fixture_data_dir: Path):
     assert frame_feat.features["spatial.p0_left_foot_min_box_dist_norm"] == pytest.approx(1.0)
 
 
+def test_foot_temporal_movement_features():
+    from analysis.constants import LEFT_ANKLE_IDX, RIGHT_ANKLE_IDX
+    from analysis.features.base import FeatureContext
+    from analysis.features.registry import default_registry
+    from analysis.records import FramePersons, RecordData
+    from pathlib import Path
+    import pandas as pd
+
+    def _person(*, track_id: int, left_ankle: tuple[float, float], right_ankle: tuple[float, float]) -> dict:
+        keypoints: list[list[float | None]] = [[None, None, None] for _ in range(17)]
+        keypoints[LEFT_ANKLE_IDX] = [left_ankle[0], left_ankle[1], 0.95]
+        keypoints[RIGHT_ANKLE_IDX] = [right_ankle[0], right_ankle[1], 0.95]
+        return {"person_track_id": track_id, "keypoints": keypoints}
+
+    record = RecordData(
+        record_id="foot_test",
+        record_dir=Path("."),
+        skeleton=pd.DataFrame(),
+        annotation={},
+        event_review=None,
+        labels=__import__("analysis.labels", fromlist=["RecordLabels"]).RecordLabels(record_id="foot_test"),
+        infer_width=640.0,
+        infer_height=480.0,
+        box_tokens=[],
+    )
+    frames = {
+        1: FramePersons(frame_idx=1, timestamp_sec=0.0, persons=[_person(track_id=1, left_ankle=(100.0, 400.0), right_ankle=(140.0, 400.0))]),
+        2: FramePersons(frame_idx=2, timestamp_sec=0.04, persons=[_person(track_id=1, left_ankle=(160.0, 400.0), right_ankle=(200.0, 400.0))]),
+    }
+    ctx = FeatureContext(
+        record=record,
+        frame=frames[2],
+        box_index={},
+        box_tokens=[],
+        frame_index=frames,
+    )
+    reg = default_registry()
+    feat = reg.extract_frame_features_from_context(ctx).features
+
+    assert feat["temporal.left_foot_x_norm"] == pytest.approx(160.0 / 640.0)
+    assert feat["temporal.foot_avg_x_norm"] == pytest.approx(180.0 / 640.0)
+    assert feat["temporal.left_foot_dx_1"] == pytest.approx(60.0 / 640.0)
+    assert feat["temporal.left_foot_dy_1"] == pytest.approx(0.0)
+    assert feat["temporal.left_foot_dist_1"] == pytest.approx(60.0 / 640.0)
+    assert feat["temporal.foot_avg_dist_1"] == pytest.approx(60.0 / 640.0)
+    assert feat["temporal.left_foot_dist_2"] == pytest.approx(0.0)
+
+
 def test_temporal_consecutive_hit_and_hand_move(fixture_data_dir: Path):
     from analysis.features.registry import default_registry
     from analysis.records import load_record

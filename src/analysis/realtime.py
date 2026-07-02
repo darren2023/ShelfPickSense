@@ -16,7 +16,8 @@ from typing import Any
 import pandas as pd
 from loguru import logger
 
-from analysis.annotation import BoxInfo, build_box_index, load_annotation
+from analysis.annotation import BoxInfo, annotation_size, build_box_index, load_annotation
+from analysis.box_layout import build_box_layout, compute_shelf_layout_stats
 from analysis.features.base import FeatureContext
 from analysis.features.registry import FeatureRegistry, default_registry
 from analysis.labels import RecordLabels
@@ -192,20 +193,15 @@ class RealtimePickingPredictor:
             x,
             record_id=self.record.record_id,
             frame_idx=frame_data.frame_idx,
+            box_layout=self.record.box_layout,
         )
-
-        predicted_box_tokens: list[str] = []
-        if pred.is_picking and self.model.box_clf is not None and self.model.box_feature_names:
-            per_box = self.registry.extract_per_box_features_from_context(ctx)
-            box_inputs = [(pb.box_token, pb.to_vector(self.model.box_feature_names)) for pb in per_box]
-            predicted_box_tokens = self.model.predict_boxes_for_frame(box_inputs)
 
         return RealtimePrediction(
             record_id=self.record.record_id,
             frame_idx=frame_data.frame_idx,
             is_picking=pred.is_picking,
             picking_prob=pred.picking_prob,
-            predicted_box_tokens=predicted_box_tokens,
+            predicted_box_tokens=list(pred.predicted_box_tokens),
         )
 
     def _remember_frame(self, frame: FramePersons, *, keep_back: int = 7) -> None:
@@ -230,6 +226,8 @@ class RealtimePickingPredictor:
         if not self._annotation or self.infer_width <= 0 or self.infer_height <= 0:
             self.box_index = {}
             self.box_tokens = []
+            self.record.box_layout = {}
+            self.record.shelf_layout_stats = {}
         else:
             self.box_index = build_box_index(
                 self._annotation,
@@ -237,6 +235,10 @@ class RealtimePickingPredictor:
                 infer_h=self.infer_height,
             )
             self.box_tokens = sorted(self.box_index.keys())
+            ann_w, _ann_h = annotation_size(self._annotation)
+            self.record.box_layout = build_box_layout(self._annotation, frame_width=ann_w)
+            self.record.shelf_layout_stats = compute_shelf_layout_stats(self.record.box_layout)
+        self.record.box_index = self.box_index
         self.record.box_tokens = self.box_tokens
         logger.debug("实时推理货框索引已更新: boxes={}", len(self.box_tokens))
 
