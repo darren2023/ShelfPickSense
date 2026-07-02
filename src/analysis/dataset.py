@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
+from loguru import logger
 
 from analysis.constants import LEFT_SHOULDER_IDX, LEFT_WRIST_IDX, RIGHT_SHOULDER_IDX, RIGHT_WRIST_IDX
 from analysis.features.registry import FeatureRegistry, default_registry
@@ -78,6 +79,17 @@ def skeleton_frame_keys(records: list[RecordData]) -> set[tuple[str, int]]:
     return keys
 
 
+def _feature_extract_log_interval(total_frames: int) -> int:
+    """根据总帧数选择进度日志间隔。"""
+    if total_frames <= 50:
+        return 10
+    if total_frames <= 500:
+        return 50
+    if total_frames <= 5000:
+        return 200
+    return 500
+
+
 def filter_empty_skeleton_frames(
     dataset: Dataset,
     records: list[RecordData],
@@ -95,6 +107,13 @@ def filter_empty_skeleton_frames(
         if (sample.record_id, sample.frame_idx) in valid_keys
     ]
     removed = len(dataset.frame_samples) - len(kept_frames)
+    if removed:
+        logger.info(
+            "过滤无骨架帧: removed={}, kept_frames={}, kept_box_samples={}",
+            removed,
+            len(kept_frames),
+            len(kept_box),
+        )
     return (
         Dataset(
             frame_samples=kept_frames,
@@ -117,7 +136,17 @@ def build_dataset(
     frame_feature_names: list[str] = []
     box_feature_names: list[str] = []
 
-    for record in records:
+    total_frames = sum(len(record.frames()) for record in records)
+    log_interval = _feature_extract_log_interval(total_frames)
+    logger.info(
+        "开始提取特征: records={}, total_frames={}, filter_empty_skeleton={}",
+        len(records),
+        total_frames,
+        filter_empty_skeleton,
+    )
+
+    processed_frames = 0
+    for record_index, record in enumerate(records, start=1):
         if not frame_feature_names:
             frame_feature_names = reg.frame_feature_names(record)
             if feature_selection:
@@ -127,7 +156,16 @@ def build_dataset(
             if feature_selection:
                 box_feature_names = feature_selection.select_box(box_feature_names)
 
-        for frame in record.frames():
+        frames = record.frames()
+        logger.info(
+            "提取特征 [{}/{}]: record={} frames={}",
+            record_index,
+            len(records),
+            record.record_id,
+            len(frames),
+        )
+
+        for frame in frames:
             label = record.labels.label_for(frame.frame_idx)
             frame_feat = reg.extract_frame_features(record, frame)
             frame_samples.append(
@@ -140,19 +178,27 @@ def build_dataset(
                 )
             )
 
-            if not label.is_picking:
-                continue
-
-            confirmed = set(label.confirmed_box_tokens)
-            for pb in reg.extract_per_box_features(record, frame):
-                box_samples.append(
-                    BoxSample(
-                        record_id=record.record_id,
-                        frame_idx=frame.frame_idx,
-                        box_token=pb.box_token,
-                        x=pb.to_vector(box_feature_names),
-                        is_target=pb.box_token in confirmed,
+            if label.is_picking:
+                confirmed = set(label.confirmed_box_tokens)
+                for pb in reg.extract_per_box_features(record, frame):
+                    box_samples.append(
+                        BoxSample(
+                            record_id=record.record_id,
+                            frame_idx=frame.frame_idx,
+                            box_token=pb.box_token,
+                            x=pb.to_vector(box_feature_names),
+                            is_target=pb.box_token in confirmed,
+                        )
                     )
+
+            processed_frames += 1
+            if processed_frames == total_frames or processed_frames % log_interval == 0:
+                logger.info(
+                    "提取特征进度: frames={}/{} ({:.1f}%), box_samples={}",
+                    processed_frames,
+                    total_frames,
+                    100.0 * processed_frames / max(total_frames, 1),
+                    len(box_samples),
                 )
 
     dataset = Dataset(
@@ -163,6 +209,15 @@ def build_dataset(
     )
     if filter_empty_skeleton:
         dataset, _ = filter_empty_skeleton_frames(dataset, records)
+
+    logger.info(
+        "特征提取完成: frames={}, positive_frames={}, box_samples={}, frame_features={}, box_features={}",
+        dataset.frame_count,
+        dataset.positive_frame_count,
+        len(dataset.box_samples),
+        len(dataset.frame_feature_names),
+        len(dataset.box_feature_names),
+    )
     return dataset
 
 
@@ -175,6 +230,7 @@ def load_dataset(
     from pathlib import Path
 
     records = load_all_records(Path(data_dir))
+    logger.info("加载记录完成: records={}", len(records))
     return build_dataset(
         records,
         feature_selection=feature_selection,
