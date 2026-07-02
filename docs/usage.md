@@ -327,12 +327,23 @@ uv run python main.py eval-rule \
 
 ### 逐帧规则推理（infer-rule）
 
-用记录目录中的骨架回放规则推理，用法对齐 `infer-frame`：
+用记录目录中的骨架回放规则推理，用法对齐 `infer-frame`。`--record-dir` 既可以是单条记录目录，也可以是包含多条记录的父目录（如 `data/data28/Train`）：
 
 ```bash
+# 单条记录
 uv run python main.py infer-rule \
   --record-dir data/demo/record_001 \
   --output outputs/rule_stream.jsonl
+
+# 多条记录（输出到目录，每条记录一个 JSONL）
+uv run python main.py infer-rule \
+  --record-dir data/demo \
+  --output outputs/rule_streams
+
+# 多条记录（合并到一个 JSONL，每行含 record_id）
+uv run python main.py infer-rule \
+  --record-dir data/demo \
+  --output outputs/all_rule_streams.jsonl
 ```
 
 每行 JSON 包含：

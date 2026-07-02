@@ -139,52 +139,123 @@ def _cmd_eval_rule(args: argparse.Namespace) -> int:
     return 0
 
 
-def _cmd_infer_rule(args: argparse.Namespace) -> int:
-    from analysis.records import load_record
+def _infer_rule_output_path(
+    output: str,
+    record_id: str,
+    *,
+    multi_record: bool,
+) -> Path:
+    """解析 infer-rule 的 JSONL 输出路径。"""
+    out = Path(output)
+    if multi_record and out.suffix != ".jsonl":
+        out.mkdir(parents=True, exist_ok=True)
+        return out / f"{record_id}.jsonl"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    return out
 
-    record = load_record(Path(args.record_dir))
+
+def _run_infer_rule_record(
+    record,
+    *,
+    infer_width: float | None,
+    infer_height: float | None,
+    fps: float,
+    max_frames: int,
+    realtime: bool,
+    video: str,
+    out_file,
+) -> int:
+    """对单条记录执行规则逐帧推理，返回处理的帧数。"""
     predictor = RealtimeRulePredictor.from_record_dir(
-        Path(args.record_dir),
-        infer_width=args.infer_width if args.infer_width is not None else record.infer_width,
-        infer_height=args.infer_height if args.infer_height is not None else record.infer_height,
-        video_fps=args.fps,
+        record.record_dir,
+        infer_width=infer_width if infer_width is not None else record.infer_width,
+        infer_height=infer_height if infer_height is not None else record.infer_height,
+        video_fps=fps,
     )
 
     frames = record.frames()
-    if args.max_frames > 0:
-        frames = frames[: args.max_frames]
-    frame_interval = 1.0 / args.fps if args.realtime and args.fps > 0 else 0.0
+    if max_frames > 0:
+        frames = frames[:max_frames]
+    frame_interval = 1.0 / fps if realtime and fps > 0 else 0.0
     logger.info(
         "开始规则逐帧推理: record={}, video={}, frames={}, realtime={}, fps={}",
         record.record_id,
-        args.video or "",
+        video or "",
         len(frames),
-        args.realtime,
-        args.fps,
+        realtime,
+        fps,
     )
 
-    out_file = None
-    if args.output:
-        out_path = Path(args.output)
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_file = out_path.open("w", encoding="utf-8")
-
-    try:
-        for frame in frames:
-            pred = predictor.predict_frame(
-                frame.persons,
-                frame_idx=frame.frame_idx,
-                timestamp_sec=frame.timestamp_sec,
-            )
-            line = json.dumps(pred.to_dict(), ensure_ascii=False)
-            if out_file:
-                out_file.write(line + "\n")
-            _log_jsonl(line)
-            if frame_interval > 0:
-                time.sleep(frame_interval)
-    finally:
+    for frame in frames:
+        pred = predictor.predict_frame(
+            frame.persons,
+            frame_idx=frame.frame_idx,
+            timestamp_sec=frame.timestamp_sec,
+        )
+        line = json.dumps(pred.to_dict(), ensure_ascii=False)
         if out_file:
-            out_file.close()
+            out_file.write(line + "\n")
+        _log_jsonl(line)
+        if frame_interval > 0:
+            time.sleep(frame_interval)
+    return len(frames)
+
+
+def _cmd_infer_rule(args: argparse.Namespace) -> int:
+    from analysis.records import load_all_records
+
+    input_path = Path(args.record_dir)
+    records = load_all_records(input_path)
+    multi_record = len(records) > 1
+    merge_output = bool(args.output) and multi_record and Path(args.output).suffix == ".jsonl"
+
+    logger.info(
+        "规则逐帧推理: input={}, records={}, output={}, merge_output={}",
+        input_path,
+        len(records),
+        args.output or "",
+        merge_output,
+    )
+
+    merge_file = None
+    total_frames = 0
+    try:
+        if merge_output:
+            merge_path = Path(args.output)
+            merge_path.parent.mkdir(parents=True, exist_ok=True)
+            merge_file = merge_path.open("w", encoding="utf-8")
+
+        for record in records:
+            out_file = merge_file
+            close_after = False
+            if out_file is None and args.output:
+                out_path = _infer_rule_output_path(
+                    args.output,
+                    record.record_id,
+                    multi_record=multi_record,
+                )
+                out_file = out_path.open("w", encoding="utf-8")
+                close_after = True
+
+            try:
+                total_frames += _run_infer_rule_record(
+                    record,
+                    infer_width=args.infer_width,
+                    infer_height=args.infer_height,
+                    fps=args.fps,
+                    max_frames=args.max_frames,
+                    realtime=args.realtime,
+                    video=args.video,
+                    out_file=out_file,
+                )
+            finally:
+                if close_after and out_file:
+                    out_file.close()
+    finally:
+        if merge_file:
+            merge_file.close()
+
+    logger.info("规则逐帧推理完成: records={}, frames={}", len(records), total_frames)
     return 0
 
 
@@ -635,14 +706,22 @@ def build_parser() -> argparse.ArgumentParser:
     p_infer.set_defaults(func=_cmd_infer_frame)
 
     p_infer_rule = sub.add_parser("infer-rule", help="用规则碰撞方法模拟视频流逐帧推理")
-    p_infer_rule.add_argument("--record-dir", required=True, help="记录目录（读取 skeleton.parquet 和 annotation.json）")
+    p_infer_rule.add_argument(
+        "--record-dir",
+        required=True,
+        help="记录目录或包含多条记录的父目录（需含 skeleton.parquet 与 annotation.json）",
+    )
     p_infer_rule.add_argument("--video", default="", help="原始视频路径，仅用于日志标识")
     p_infer_rule.add_argument("--infer-width", type=float, default=None, help="推理坐标宽度")
     p_infer_rule.add_argument("--infer-height", type=float, default=None, help="推理坐标高度")
     p_infer_rule.add_argument("--fps", type=float, default=25.0, help="模拟流帧率")
     p_infer_rule.add_argument("--max-frames", type=int, default=0, help="最多推理帧数，0 表示全部")
     p_infer_rule.add_argument("--realtime", action="store_true", help="按 fps sleep，模拟真实时间流")
-    p_infer_rule.add_argument("--output", default="", help="JSONL 输出文件路径")
+    p_infer_rule.add_argument(
+        "--output",
+        default="",
+        help="JSONL 输出：单条记录为文件路径；多条记录时为目录（逐条生成 {record_id}.jsonl）或合并 .jsonl 文件",
+    )
     _add_logging_args(p_infer_rule)
     p_infer_rule.set_defaults(func=_cmd_infer_rule)
 

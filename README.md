@@ -99,7 +99,10 @@ uv run python main.py infer-frame --model models/rf --record-dir data/demo --vid
 用规则碰撞方法逐帧推理：
 
 ```bash
+# 单条记录
 uv run python main.py infer-rule --record-dir data/demo/record_001 --output outputs/rule_stream.jsonl
+# 多条记录（父目录）
+uv run python main.py infer-rule --record-dir data/demo --output outputs/rule_streams
 ```
 
 ## 文档

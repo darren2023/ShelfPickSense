@@ -63,6 +63,18 @@ def test_cli_eval_rule(tmp_path: Path):
     assert any(output_dir.glob("eval_predictions*.json"))
 
 
+def test_cli_infer_rule_multi_records(tmp_path: Path):
+    from analysis.cli import main
+
+    data_dir = tmp_path / "dataset"
+    make_fixture_record(data_dir / "record_001")
+    make_fixture_record(data_dir / "record_002")
+    output_dir = tmp_path / "rule_streams"
+    assert main(["infer-rule", "--record-dir", str(data_dir), "--output", str(output_dir)]) == 0
+    assert (output_dir / "record_001.jsonl").is_file()
+    assert (output_dir / "record_002.jsonl").is_file()
+
+
 def test_realtime_rule_predictor(tmp_path: Path):
     from analysis.records import load_record
     from analysis.rule_baseline import RealtimeRulePredictor
