@@ -54,11 +54,23 @@ def make_fixture_record(output_dir: Path) -> Path:
                         "box_id": "A1",
                         "shelf_code": "S1",
                         "video_polygon": [[100, 100], [200, 100], [200, 200], [100, 200]],
+                        "video_polygon_norm": [
+                            [0.15625, 0.20833333333333334],
+                            [0.3125, 0.20833333333333334],
+                            [0.3125, 0.4166666666666667],
+                            [0.15625, 0.4166666666666667],
+                        ],
                     },
                     {
                         "box_id": "A2",
                         "shelf_code": "S1",
                         "video_polygon": [[300, 100], [400, 100], [400, 200], [300, 200]],
+                        "video_polygon_norm": [
+                            [0.46875, 0.20833333333333334],
+                            [0.625, 0.20833333333333334],
+                            [0.625, 0.4166666666666667],
+                            [0.46875, 0.4166666666666667],
+                        ],
                     },
                 ],
             }
@@ -73,12 +85,12 @@ def make_fixture_record(output_dir: Path) -> Path:
     # 帧 1-5：无取货，手腕远离货框
     for fi in range(1, 6):
         rows.append(_skeleton_row(fi, left_wrist=(10, 10), right_wrist=(15, 12)))
-    # 帧 6-8：取货 A1，手腕落在 infer 缩放后的 A1 多边形内
+    # 帧 6-8：取货 A1，手腕落在 A1 多边形内（与 640×480 推理坐标一致）
     for fi in range(6, 9):
-        rows.append(_skeleton_row(fi, left_wrist=(50, 45), right_wrist=(55, 48)))
+        rows.append(_skeleton_row(fi, left_wrist=(150, 150), right_wrist=(160, 155)))
     # 帧 9-10：取货 A2
     for fi in range(9, 11):
-        rows.append(_skeleton_row(fi, left_wrist=(130, 45), right_wrist=(140, 48)))
+        rows.append(_skeleton_row(fi, left_wrist=(350, 150), right_wrist=(360, 155)))
 
     pd.DataFrame(rows).to_parquet(output_dir / "skeleton.parquet", index=False)
 

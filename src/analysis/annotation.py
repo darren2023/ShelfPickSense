@@ -51,19 +51,31 @@ def box_collision_token(box: dict[str, Any]) -> str:
     return f"Box_{box_id}"
 
 
+def annotation_size(annotation: dict[str, Any]) -> tuple[float | None, float | None]:
+    ann_size = annotation.get("annotation_size") if isinstance(annotation.get("annotation_size"), dict) else {}
+    ann_w = float(ann_size.get("width") or 0) or None
+    ann_h = float(ann_size.get("height") or 0) or None
+    return ann_w, ann_h
+
+
+def _parse_polygon_list(raw: Any) -> list[tuple[float, float]]:
+    if not isinstance(raw, list) or len(raw) < 3:
+        return []
+    pts: list[tuple[float, float]] = []
+    for pt in raw:
+        if isinstance(pt, (list, tuple)) and len(pt) >= 2:
+            pts.append((float(pt[0]), float(pt[1])))
+    return pts
+
+
 def polygon_points(box: dict[str, Any]) -> list[tuple[float, float]]:
-    """从货框读取多边形顶点（优先 video_polygon，其次 video_polygon_norm）。"""
-    for key in ("video_polygon", "video_polygon_norm"):
-        raw = box.get(key)
-        if not isinstance(raw, list) or len(raw) < 3:
-            continue
-        pts: list[tuple[float, float]] = []
-        for pt in raw:
-            if isinstance(pt, (list, tuple)) and len(pt) >= 2:
-                pts.append((float(pt[0]), float(pt[1])))
-        if len(pts) >= 3:
-            return pts
-    return []
+    """从货框读取 video_polygon 顶点。"""
+    return _parse_polygon_list(box.get("video_polygon"))
+
+
+def normalized_polygon_points(box: dict[str, Any]) -> list[tuple[float, float]]:
+    """从货框读取 video_polygon_norm 顶点（相对 annotation_size，0~1）。"""
+    return _parse_polygon_list(box.get("video_polygon_norm"))
 
 
 def scale_polygon_to_frame(
@@ -74,20 +86,38 @@ def scale_polygon_to_frame(
     target_w: float,
     target_h: float,
 ) -> list[tuple[float, float]]:
-    """将标注坐标缩放到推理/骨骼坐标系。"""
+    """将标注坐标缩放到推理/骨骼坐标系（保持宽高比一致）。"""
     if not pts:
         return []
-    max_x = max(p[0] for p in pts)
-    max_y = max(p[1] for p in pts)
     tw, th = float(target_w), float(target_h)
     if ann_w and ann_h and ann_w > 0 and ann_h > 0:
-        sx = tw / float(ann_w) if max_x <= float(ann_w) * 1.05 else tw / max(max_x, 1.0)
-        sy = th / float(ann_h) if max_y <= float(ann_h) * 1.05 else th / max(max_y, 1.0)
-    elif max_x > 0 and max_y > 0:
-        sx, sy = tw / max_x, th / max_y
+        sx = tw / float(ann_w)
+        sy = th / float(ann_h)
     else:
-        sx = sy = 1.0
+        max_x = max(p[0] for p in pts)
+        max_y = max(p[1] for p in pts)
+        if max_x > 0 and max_y > 0:
+            sx, sy = tw / max_x, th / max_y
+        else:
+            sx = sy = 1.0
     return [(x * sx, y * sy) for x, y in pts]
+
+
+def infer_polygon_points(
+    box: dict[str, Any],
+    *,
+    infer_w: float,
+    infer_h: float,
+    ann_w: float | None,
+    ann_h: float | None,
+) -> list[tuple[float, float]]:
+    """将货框多边形变换到推理坐标系。优先使用 video_polygon_norm。"""
+    norm_pts = normalized_polygon_points(box)
+    if norm_pts:
+        return [(x * infer_w, y * infer_h) for x, y in norm_pts]
+
+    raw_pts = polygon_points(box)
+    return scale_polygon_to_frame(raw_pts, ann_w=ann_w, ann_h=ann_h, target_w=infer_w, target_h=infer_h)
 
 
 @dataclass(frozen=True)
@@ -113,17 +143,14 @@ def build_box_index(
     infer_h: float,
 ) -> dict[str, BoxInfo]:
     """构建 token -> BoxInfo 索引。"""
-    ann_size = annotation.get("annotation_size") if isinstance(annotation.get("annotation_size"), dict) else {}
-    ann_w = float(ann_size.get("width") or 0) or None
-    ann_h = float(ann_size.get("height") or 0) or None
+    ann_w, ann_h = annotation_size(annotation)
 
     index: dict[str, BoxInfo] = {}
     for raw in flatten_annotation_boxes(annotation):
         token = box_collision_token(raw)
         if not token:
             continue
-        pts = polygon_points(raw)
-        scaled = scale_polygon_to_frame(pts, ann_w=ann_w, ann_h=ann_h, target_w=infer_w, target_h=infer_h)
+        scaled = infer_polygon_points(raw, infer_w=infer_w, infer_h=infer_h, ann_w=ann_w, ann_h=ann_h)
         if len(scaled) < 3:
             continue
         shelf = str(raw.get("shelf_code", "") or "").strip()

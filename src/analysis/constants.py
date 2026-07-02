@@ -34,3 +34,8 @@ RIGHT_ANKLE_IDX = 16
 SKELETON_FILE = "skeleton.parquet"
 ANNOTATION_FILE = "annotation.json"
 EVENT_REVIEW_FILE = "event_review.json"
+MANIFEST_FILE = "manifest.json"
+
+# 与 visual-dps-datacollect pose 采集默认推理尺寸一致（640×360 标注 → 852×480）
+DEFAULT_POSE_INFER_WIDTH = 852.0
+DEFAULT_POSE_INFER_HEIGHT = 480.0

@@ -259,6 +259,30 @@ def _cmd_infer_rule(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_viz_frames(args: argparse.Namespace) -> int:
+    from analysis.frame_viz import write_frame_viz_html
+
+    record_dir = Path(args.record_dir)
+    output_path = Path(args.output)
+    predictions = Path(args.predictions) if args.predictions else None
+    logger.info(
+        "生成帧可视化: record={}, frames={}.., max={}, output={}",
+        record_dir,
+        args.start_frame,
+        args.max_frames,
+        output_path,
+    )
+    out = write_frame_viz_html(
+        record_dir,
+        output_path,
+        max_frames=args.max_frames,
+        start_frame=args.start_frame,
+        predictions_path=predictions,
+    )
+    logger.info("可视化页面已生成: {}", out.resolve())
+    return 0
+
+
 def _cmd_compare(args: argparse.Namespace) -> int:
     from analysis.evaluation import BoxMetrics, ModelEvaluation, PickingMetrics
 
@@ -724,6 +748,19 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_logging_args(p_infer_rule)
     p_infer_rule.set_defaults(func=_cmd_infer_rule)
+
+    p_viz = sub.add_parser("viz-frames", help="生成交互 HTML，叠加绘制骨架与货框标注")
+    p_viz.add_argument("--record-dir", required=True, help="记录目录")
+    p_viz.add_argument("--output", required=True, help="输出 HTML 文件路径")
+    p_viz.add_argument("--max-frames", type=int, default=10, help="最多可视化帧数（默认 10）")
+    p_viz.add_argument("--start-frame", type=int, default=1, help="起始帧索引（默认 1）")
+    p_viz.add_argument(
+        "--predictions",
+        default="",
+        help="可选：infer-rule 输出的 JSONL，用于叠加碰撞/报警高亮",
+    )
+    _add_logging_args(p_viz)
+    p_viz.set_defaults(func=_cmd_viz_frames)
 
     return parser
 

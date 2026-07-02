@@ -2,14 +2,22 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
 
-from analysis.annotation import build_box_index, load_annotation
-from analysis.constants import ANNOTATION_FILE, EVENT_REVIEW_FILE, SKELETON_FILE
+from analysis.annotation import annotation_size, build_box_index, load_annotation
+from analysis.constants import (
+    ANNOTATION_FILE,
+    DEFAULT_POSE_INFER_HEIGHT,
+    DEFAULT_POSE_INFER_WIDTH,
+    EVENT_REVIEW_FILE,
+    MANIFEST_FILE,
+    SKELETON_FILE,
+)
 from analysis.labels import RecordLabels, build_labels_from_event_review, load_event_review
 
 
@@ -78,20 +86,85 @@ def _row_to_person(row: pd.Series) -> dict[str, Any]:
     return person
 
 
+def _positive_float(value: Any) -> float | None:
+    try:
+        out = float(value)
+    except (TypeError, ValueError):
+        return None
+    return out if out > 0 else None
+
+
+def _infer_from_manifest(record_dir: Path) -> tuple[float, float] | None:
+    path = record_dir / MANIFEST_FILE
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+
+    infer_w = _positive_float(data.get("infer_width"))
+    infer_h = _positive_float(data.get("infer_height"))
+    if infer_w and infer_h:
+        return infer_w, infer_h
+
+    annotation = data.get("annotation")
+    if isinstance(annotation, dict):
+        ann_size = annotation.get("annotation_size")
+        if isinstance(ann_size, dict):
+            infer_w = _positive_float(ann_size.get("width"))
+            infer_h = _positive_float(ann_size.get("height"))
+            if infer_w and infer_h:
+                return infer_w, infer_h
+    return None
+
+
+def _infer_from_annotation_meta(annotation: dict[str, Any]) -> tuple[float, float] | None:
+    infer_w = _positive_float(annotation.get("infer_width"))
+    infer_h = _positive_float(annotation.get("infer_height"))
+    if infer_w and infer_h:
+        return infer_w, infer_h
+    return None
+
+
+def _infer_from_pose_pipeline(annotation: dict[str, Any]) -> tuple[float, float]:
+    """按 pose 采集默认推理尺寸（与 skeleton 坐标系一致）。"""
+    ann_w, ann_h = annotation_size(annotation)
+    if ann_w and ann_h:
+        aw, ah = int(round(ann_w)), int(round(ann_h))
+        # 640×360 标注时采集管线固定 852×480（非 round 推算的 853）
+        if aw == 640 and ah == 360:
+            return DEFAULT_POSE_INFER_WIDTH, DEFAULT_POSE_INFER_HEIGHT
+        infer_h = DEFAULT_POSE_INFER_HEIGHT
+        infer_w = round(infer_h * (ann_w / ann_h))
+        return float(infer_w), float(infer_h)
+    return DEFAULT_POSE_INFER_WIDTH, DEFAULT_POSE_INFER_HEIGHT
+
+
+def resolve_infer_frame_size(
+    record_dir: Path,
+    skeleton: pd.DataFrame,
+    annotation: dict[str, Any],
+) -> tuple[float, float]:
+    """解析推理坐标系尺寸（与 skeleton 关键点同一空间）。"""
+    from_manifest = _infer_from_manifest(record_dir)
+    if from_manifest:
+        return from_manifest
+
+    from_annotation = _infer_from_annotation_meta(annotation)
+    if from_annotation:
+        return from_annotation
+
+    return _infer_from_pose_pipeline(annotation)
+
+
 def _infer_frame_size(skeleton: pd.DataFrame) -> tuple[float, float]:
+    """兼容旧调用：无 annotation 时使用 pose 默认推理尺寸。"""
     if skeleton.empty:
         return 640.0, 480.0
-    xs: list[float] = []
-    ys: list[float] = []
-    for i in range(17):
-        xcol, ycol = f"kpt_{i}_x", f"kpt_{i}_y"
-        if xcol in skeleton.columns:
-            xs.extend(float(v) for v in skeleton[xcol].dropna())
-        if ycol in skeleton.columns:
-            ys.extend(float(v) for v in skeleton[ycol].dropna())
-    if not xs or not ys:
-        return 640.0, 480.0
-    return max(xs) * 1.05, max(ys) * 1.05
+    return DEFAULT_POSE_INFER_WIDTH, DEFAULT_POSE_INFER_HEIGHT
 
 
 def is_record_dir(path: Path) -> bool:
@@ -127,7 +200,7 @@ def load_record(record_dir: Path) -> RecordData:
     event_review_path = record_dir / EVENT_REVIEW_FILE
     event_review = load_event_review(event_review_path) if event_review_path.is_file() else None
 
-    infer_w, infer_h = _infer_frame_size(skeleton)
+    infer_w, infer_h = resolve_infer_frame_size(record_dir, skeleton, annotation)
     ann_size = annotation.get("annotation_size") if isinstance(annotation.get("annotation_size"), dict) else {}
     if ann_size.get("width") and ann_size.get("height"):
         # 标注尺寸用于货框多边形缩放

@@ -20,6 +20,9 @@ record_xxx/
 - `video_polygon`：货框多边形坐标。
 - `video_polygon_norm`：可选，归一化多边形坐标。
 - `annotation_size.width / height`：标注坐标尺寸。
+- `video_polygon_norm`：相对 `annotation_size` 的归一化坐标（0~1），缩放货框时优先使用。
+
+货框坐标会按 pose 推理尺寸（默认 852×480，与 640×360 标注及 skeleton 坐标系一致）变换。记录目录若有 `manifest.json`，优先读取其中的 `infer_width` / `infer_height`。
 
 货框 token 规则与采集项目保持一致：
 

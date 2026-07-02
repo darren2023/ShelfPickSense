@@ -100,11 +100,11 @@ def nearest_box_token_for_point(
     box_index: dict,
 ) -> str:
     best_token = ""
-    best_dist = margin + 1.0
+    best_signed = -float("inf")
     for token, box in box_index.items():
         signed = signed_polygon_distance(px, py, box.polygon)
-        if signed >= -margin and signed < best_dist:
-            best_dist = signed
+        if signed >= -margin and signed > best_signed:
+            best_signed = signed
             best_token = token
     return best_token
 
