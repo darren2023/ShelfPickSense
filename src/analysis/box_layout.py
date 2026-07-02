@@ -67,11 +67,60 @@ class ShelfLayoutStats:
 
     shelf_code: str
     layer_count: int
+    column_count: int
     column_count_mean: float
 
 
+def normalize_layout_layer(layer: int, layer_count: int) -> float:
+    """层号归一化：layer / (layer_count + 1)，如 4 层时 1→1/5 … 4→4/5。"""
+    if layer <= 0 or layer_count <= 0:
+        return 0.0
+    return float(layer) / float(layer_count + 1)
+
+
+def normalize_layout_column(column: int, column_count: int) -> float:
+    """列号归一化：column / (column_count + 1)。"""
+    if column <= 0 or column_count <= 0:
+        return 0.0
+    return float(column) / float(column_count + 1)
+
+
+def denormalize_layout_layer(layer_norm: float, layer_count: int) -> int:
+    if layer_count <= 0 or layer_norm <= 0:
+        return 0
+    layer = int(round(float(layer_norm) * (layer_count + 1)))
+    return max(1, min(layer_count, layer))
+
+
+def denormalize_layout_column(column_norm: float, column_count: int) -> int:
+    if column_count <= 0 or column_norm <= 0:
+        return 0
+    column = int(round(float(column_norm) * (column_count + 1)))
+    return max(1, min(column_count, column))
+
+
+def normalized_layout_targets(
+    entry: BoxNumericCode,
+    stats: ShelfLayoutStats | None,
+) -> tuple[float, float]:
+    """由货框布局码与货架统计得到归一化监督 (layer_norm, column_norm)。"""
+    if stats is None:
+        return 0.0, 0.0
+    return (
+        normalize_layout_layer(entry.layer, stats.layer_count),
+        normalize_layout_column(entry.column, stats.column_count),
+    )
+
+
+def record_layout_denorm_bounds(layout: dict[str, BoxNumericCode]) -> tuple[int, int]:
+    """记录级层/列上界，用于推理时将归一化预测还原为整数层列。"""
+    if not layout:
+        return 0, 0
+    return max(code.layer for code in layout.values()), max(code.column for code in layout.values())
+
+
 def compute_shelf_layout_stats(layout: dict[str, BoxNumericCode]) -> dict[str, ShelfLayoutStats]:
-    """按货架统计层数，以及各层列数的平均值。"""
+    """按货架统计层数、列数（最大值）及各层列数均值。"""
     by_shelf: dict[str, list[BoxNumericCode]] = defaultdict(list)
     for entry in layout.values():
         key = entry.shelf_code or "_default"
@@ -86,10 +135,12 @@ def compute_shelf_layout_stats(layout: dict[str, BoxNumericCode]) -> dict[str, S
         for box in boxes:
             columns_by_layer[box.layer].append(box.column)
         per_layer_counts = [max(cols) for cols in columns_by_layer.values() if cols]
+        column_count = max(per_layer_counts) if per_layer_counts else 0
         column_count_mean = sum(per_layer_counts) / len(per_layer_counts) if per_layer_counts else 0.0
         stats[shelf_code] = ShelfLayoutStats(
             shelf_code=shelf_code,
             layer_count=layer_count,
+            column_count=column_count,
             column_count_mean=column_count_mean,
         )
     return stats

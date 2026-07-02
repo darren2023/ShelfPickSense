@@ -22,14 +22,19 @@ _SKELETON_PROBE_INDICES = (
 )
 
 
-def _layout_target_from_label(record: RecordData, label) -> tuple[int, int, int]:
-    """从 confirmed 货框取几何推导的监督值 (shelf_side, layout_layer, layout_column)。"""
+from analysis.box_layout import normalized_layout_targets
+
+
+def _layout_target_from_label(record: RecordData, label) -> tuple[int, float, float]:
+    """从 confirmed 货框取 (shelf_side, layout_layer_norm, layout_column_norm)。"""
     if not label.confirmed_box_tokens:
-        return 0, 0, 0
+        return 0, 0.0, 0.0
     entry = record.box_layout.get(label.confirmed_box_tokens[0])
     if entry is None:
-        return 0, 0, 0
-    return entry.shelf_side, entry.layer, entry.column
+        return 0, 0.0, 0.0
+    stats = record.shelf_layout_stats.get(entry.shelf_code or "_default")
+    layer_norm, column_norm = normalized_layout_targets(entry, stats)
+    return entry.shelf_side, layer_norm, column_norm
 
 
 @dataclass
@@ -39,8 +44,8 @@ class FrameSample:
     x: np.ndarray
     is_picking: bool
     target_layout_shelf_side: int = 0
-    target_layout_layer: int = 0
-    target_layout_column: int = 0
+    target_layout_layer_norm: float = 0.0
+    target_layout_column_norm: float = 0.0
 
 
 @dataclass
@@ -52,8 +57,8 @@ class BoxSample:
     x: np.ndarray
     is_target: bool
     target_layout_shelf_side: int = 0
-    target_layout_layer: int = 0
-    target_layout_column: int = 0
+    target_layout_layer_norm: float = 0.0
+    target_layout_column_norm: float = 0.0
 
 
 @dataclass
@@ -186,7 +191,7 @@ def build_dataset(
         for frame in frames:
             ctx = FeatureContext.from_record(record, frame, frame_index=frame_index)
             label = record.labels.label_for(frame.frame_idx)
-            target_side, target_layer, target_col = _layout_target_from_label(record, label)
+            target_side, target_layer_norm, target_col_norm = _layout_target_from_label(record, label)
             frame_feat = reg.extract_frame_features_from_context(ctx)
             frame_samples.append(
                 FrameSample(
@@ -195,8 +200,8 @@ def build_dataset(
                     x=frame_feat.to_vector(frame_feature_names),
                     is_picking=label.is_picking,
                     target_layout_shelf_side=target_side if label.is_picking else 0,
-                    target_layout_layer=target_layer if label.is_picking else 0,
-                    target_layout_column=target_col if label.is_picking else 0,
+                    target_layout_layer_norm=target_layer_norm if label.is_picking else 0.0,
+                    target_layout_column_norm=target_col_norm if label.is_picking else 0.0,
                 )
             )
 
@@ -205,6 +210,16 @@ def build_dataset(
                 for pb in reg.extract_per_box_features_from_context(ctx):
                     layout_entry = record.box_layout.get(pb.box_token)
                     box_code = layout_entry.encode() if layout_entry else 0
+                    box_stats = (
+                        record.shelf_layout_stats.get(layout_entry.shelf_code or "_default")
+                        if layout_entry
+                        else None
+                    )
+                    layer_norm, col_norm = (
+                        normalized_layout_targets(layout_entry, box_stats)
+                        if layout_entry
+                        else (0.0, 0.0)
+                    )
                     box_samples.append(
                         BoxSample(
                             record_id=record.record_id,
@@ -214,8 +229,8 @@ def build_dataset(
                             x=pb.to_vector(box_feature_names),
                             is_target=box_code in confirmed_codes,
                             target_layout_shelf_side=layout_entry.shelf_side if layout_entry else 0,
-                            target_layout_layer=layout_entry.layer if layout_entry else 0,
-                            target_layout_column=layout_entry.column if layout_entry else 0,
+                            target_layout_layer_norm=layer_norm,
+                            target_layout_column_norm=col_norm,
                         )
                     )
 

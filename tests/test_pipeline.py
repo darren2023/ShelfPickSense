@@ -92,18 +92,24 @@ def test_two_stage_layout_prediction(fixture_data_dir: Path, tmp_path: Path):
         box_layout=record.box_layout,
     )
     assert pred.is_picking
-    assert pred.predicted_layout_layer == pick_frame.target_layout_layer
-    assert pred.predicted_layout_column == pick_frame.target_layout_column
+    assert pred.predicted_layout_layer_norm == pytest.approx(
+        pick_frame.target_layout_layer_norm, abs=0.05
+    )
+    assert pred.predicted_layout_column_norm == pytest.approx(
+        pick_frame.target_layout_column_norm, abs=0.05
+    )
+    assert pred.predicted_layout_layer == 1
+    assert pred.predicted_layout_column == 2
     assert pred.predicted_box_tokens
 
     model_dir = tmp_path / "layout_model"
     model.save(model_dir)
     loaded = SklearnPickingModel.load(model_dir)
-    assert (model_dir / "layout_layer_clf.pkl").is_file()
-    assert (model_dir / "layout_column_clf.pkl").is_file()
+    assert (model_dir / "layout_layer_reg.pkl").is_file()
+    assert (model_dir / "layout_column_reg.pkl").is_file()
     meta = json.loads((model_dir / "meta.json").read_text(encoding="utf-8"))
     assert meta["stage1_target"] == "is_picking"
-    assert meta["stage2_targets"] == ["target_layout_layer", "target_layout_column"]
+    assert meta["stage2_targets"] == ["target_layout_layer_norm", "target_layout_column_norm"]
 
 
 def test_supported_sklearn_models_can_train_predict_and_load(fixture_data_dir: Path, tmp_path: Path):
@@ -302,9 +308,9 @@ def test_cli_export_features(fixture_data_dir: Path, tmp_path: Path):
     assert len(frame_df) == 10
     assert len(box_df) == 6
     assert {"record_id", "frame_idx", "is_picking"} <= set(frame_df.columns)
-    assert {"target_layout_layer", "target_layout_column", "target_layout_shelf_side"} <= set(frame_df.columns)
+    assert {"target_layout_layer_norm", "target_layout_column_norm", "target_layout_shelf_side"} <= set(frame_df.columns)
     assert {"record_id", "frame_idx", "box_token", "is_target"} <= set(box_df.columns)
-    assert {"target_layout_layer", "target_layout_column", "target_layout_shelf_side"} <= set(box_df.columns)
+    assert {"target_layout_layer_norm", "target_layout_column_norm", "target_layout_shelf_side"} <= set(box_df.columns)
     assert "layout.shelf_side" in box_df.columns
     assert "layout.layout_layer" in box_df.columns
     assert "layout.layout_column" in box_df.columns
@@ -407,11 +413,11 @@ def test_cli_export_features_all_formats(fixture_data_dir: Path, tmp_path: Path)
 
     frame_csv = pd.read_csv(output_dir / "frame_features.csv")
     assert len(frame_csv) == 10
-    assert "target_layout_layer" in frame_csv.columns
+    assert "target_layout_layer_norm" in frame_csv.columns
 
     first_jsonl = (output_dir / "frame_features.jsonl").read_text(encoding="utf-8").splitlines()[0]
     first_row = json.loads(first_jsonl)
-    assert {"record_id", "frame_idx", "is_picking", "target_layout_layer"} <= set(first_row)
+    assert {"record_id", "frame_idx", "is_picking", "target_layout_layer_norm"} <= set(first_row)
 
     meta = json.loads((output_dir / "features_meta.json").read_text(encoding="utf-8"))
     assert meta["output_format"] == "all"

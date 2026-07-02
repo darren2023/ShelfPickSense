@@ -10,7 +10,8 @@ from typing import Any
 
 from loguru import logger
 
-from analysis.features.registry import FeatureRegistry, default_registry
+from analysis.box_layout import normalized_layout_targets
+from analysis.features.registry import default_registry
 from analysis.models import PickingModel, SklearnPickingModel
 from analysis.records import FramePersons, RecordData, load_all_records
 
@@ -180,6 +181,8 @@ def predict_record(
                 "frame_idx": frame.frame_idx,
                 "is_picking": pred.is_picking,
                 "picking_prob": pred.picking_prob,
+                "predicted_layout_layer_norm": pred.predicted_layout_layer_norm,
+                "predicted_layout_column_norm": pred.predicted_layout_column_norm,
                 "predicted_layout_layer": pred.predicted_layout_layer,
                 "predicted_layout_column": pred.predicted_layout_column,
                 "predicted_box_tokens": list(pred.predicted_box_tokens),
@@ -227,14 +230,19 @@ class Evaluator:
                 pred_is_picking = bool(pred.get("is_picking"))
                 true_box_tokens = list(label.confirmed_box_tokens)
                 pred_box_tokens = list(pred.get("predicted_box_tokens") or [])
-                true_side, true_layer, true_col = 0, 0, 0
+                true_layer_norm, true_col_norm = 0.0, 0.0
+                true_layer, true_col = 0, 0
                 if label.confirmed_box_tokens:
                     entry = record.box_layout.get(label.confirmed_box_tokens[0])
                     if entry is not None:
-                        true_side, true_layer, true_col = entry.shelf_side, entry.layer, entry.column
+                        stats = record.shelf_layout_stats.get(entry.shelf_code or "_default")
+                        true_layer_norm, true_col_norm = normalized_layout_targets(entry, stats)
+                        true_layer, true_col = entry.layer, entry.column
                 y_true.append(true_is_picking)
                 y_pred.append(pred_is_picking)
 
+                pred_layer_norm = float(pred.get("predicted_layout_layer_norm") or 0.0)
+                pred_col_norm = float(pred.get("predicted_layout_column_norm") or 0.0)
                 prediction_rows.append(
                     {
                         "record_id": record.record_id,
@@ -242,10 +250,20 @@ class Evaluator:
                         "true_is_picking": true_is_picking,
                         "pred_is_picking": pred_is_picking,
                         "picking_prob": float(pred.get("picking_prob") or 0.0),
+                        "true_layout_layer_norm": true_layer_norm if true_is_picking else 0.0,
+                        "true_layout_column_norm": true_col_norm if true_is_picking else 0.0,
+                        "pred_layout_layer_norm": pred_layer_norm,
+                        "pred_layout_column_norm": pred_col_norm,
                         "true_layout_layer": true_layer if true_is_picking else 0,
                         "true_layout_column": true_col if true_is_picking else 0,
                         "pred_layout_layer": int(pred.get("predicted_layout_layer") or 0),
                         "pred_layout_column": int(pred.get("predicted_layout_column") or 0),
+                        "layout_layer_norm_match": (
+                            true_is_picking and abs(pred_layer_norm - true_layer_norm) < 1e-6
+                        ),
+                        "layout_column_norm_match": (
+                            true_is_picking and abs(pred_col_norm - true_col_norm) < 1e-6
+                        ),
                         "layout_layer_match": (
                             true_is_picking and int(pred.get("predicted_layout_layer") or 0) == true_layer
                         ),

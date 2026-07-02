@@ -106,7 +106,23 @@ def test_compute_shelf_layout_stats():
     }
     stats = compute_shelf_layout_stats(layout)["81"]
     assert stats.layer_count == 3
+    assert stats.column_count == 4
     assert stats.column_count_mean == pytest.approx(4.0)
+
+
+def test_normalize_layout_layer_column():
+    from analysis.box_layout import (
+        denormalize_layout_column,
+        denormalize_layout_layer,
+        normalize_layout_column,
+        normalize_layout_layer,
+    )
+
+    assert normalize_layout_layer(1, 4) == pytest.approx(0.2)
+    assert normalize_layout_layer(4, 4) == pytest.approx(0.8)
+    assert normalize_layout_column(2, 4) == pytest.approx(0.4)
+    assert denormalize_layout_layer(0.8, 4) == 4
+    assert denormalize_layout_column(0.4, 4) == 2
 
 
 def test_two_shelf_side_layer_column_rules():

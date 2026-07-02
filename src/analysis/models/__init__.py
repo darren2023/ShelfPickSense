@@ -10,23 +10,49 @@ from typing import Any
 
 import joblib
 import numpy as np
-from sklearn.dummy import DummyClassifier
+from sklearn.dummy import DummyClassifier, DummyRegressor
 from sklearn.ensemble import (
     AdaBoostClassifier,
     ExtraTreesClassifier,
+    ExtraTreesRegressor,
     GradientBoostingClassifier,
+    GradientBoostingRegressor,
     HistGradientBoostingClassifier,
+    HistGradientBoostingRegressor,
     RandomForestClassifier,
+    RandomForestRegressor,
 )
-from sklearn.tree import DecisionTreeClassifier
-from sklearn.neighbors import KNeighborsClassifier
-from sklearn.linear_model import LogisticRegression
+from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
+from sklearn.neighbors import KNeighborsClassifier, KNeighborsRegressor
+from sklearn.linear_model import LogisticRegression, Ridge
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import LabelEncoder, StandardScaler
-from sklearn.svm import SVC
+from sklearn.preprocessing import StandardScaler
+from sklearn.svm import SVC, SVR
 
-from analysis.box_layout import BoxNumericCode, resolve_box_tokens_by_layout
+from analysis.box_layout import (
+    BoxNumericCode,
+    denormalize_layout_column,
+    denormalize_layout_layer,
+    record_layout_denorm_bounds,
+    resolve_box_tokens_by_layout,
+)
 from analysis.dataset import Dataset
+
+
+class _ArrayLGBMRegressor:
+    def __init__(self, **kwargs: Any) -> None:
+        try:
+            from lightgbm import LGBMRegressor
+        except ImportError as exc:
+            raise ImportError("需要安装 lightgbm，请运行: uv sync") from exc
+        self._reg = LGBMRegressor(**kwargs)
+
+    def fit(self, X: np.ndarray, y: np.ndarray, sample_weight: Any = None) -> _ArrayLGBMRegressor:
+        self._reg.fit(np.asarray(X), y, sample_weight=sample_weight)
+        return self
+
+    def predict(self, X: np.ndarray) -> np.ndarray:
+        return self._reg.predict(np.asarray(X))
 
 
 class _ArrayLGBMClassifier:
@@ -77,6 +103,8 @@ class PickingPrediction:
     frame_idx: int
     is_picking: bool
     picking_prob: float
+    predicted_layout_layer_norm: float = 0.0
+    predicted_layout_column_norm: float = 0.0
     predicted_layout_layer: int = 0
     predicted_layout_column: int = 0
     predicted_box_tokens: list[str] = field(default_factory=list)
@@ -198,6 +226,79 @@ def _make_classifier(model_type: str, *, for_layout: bool = False) -> Pipeline:
     return Pipeline([("scaler", StandardScaler()), ("clf", est)])
 
 
+def _make_regressor(model_type: str, *, for_layout: bool = False) -> Pipeline:
+    if model_type == "logistic":
+        est = Ridge(alpha=1.0)
+    elif model_type == "extra_trees":
+        est = ExtraTreesRegressor(
+            n_estimators=80 if for_layout else 120,
+            max_depth=10 if for_layout else 12,
+            random_state=42,
+        )
+    elif model_type == "gradient_boosting":
+        est = GradientBoostingRegressor(
+            n_estimators=80 if for_layout else 120,
+            max_depth=3,
+            random_state=42,
+        )
+    elif model_type == "hist_gradient_boosting":
+        est = HistGradientBoostingRegressor(
+            max_iter=80 if for_layout else 120,
+            max_leaf_nodes=15,
+            l2_regularization=0.01,
+            random_state=42,
+        )
+    elif model_type == "ada_boost":
+        est = GradientBoostingRegressor(
+            n_estimators=60 if for_layout else 100,
+            learning_rate=0.5,
+            random_state=42,
+        )
+    elif model_type in ("svm_rbf", "linear_svm"):
+        est = SVR(C=2.0 if model_type == "svm_rbf" else 1.0, gamma="scale")
+    elif model_type == "knn":
+        est = KNeighborsRegressor(n_neighbors=3, weights="distance")
+    elif model_type == "decision_tree":
+        est = DecisionTreeRegressor(
+            max_depth=6 if for_layout else 8,
+            min_samples_leaf=2,
+            random_state=42,
+        )
+    elif model_type == "dummy":
+        est = DummyRegressor(strategy="mean")
+    elif model_type == "xgboost":
+        try:
+            from xgboost import XGBRegressor
+        except ImportError as exc:
+            raise ImportError("需要安装 xgboost，请运行: uv sync") from exc
+        est = XGBRegressor(
+            n_estimators=80 if for_layout else 120,
+            max_depth=4 if for_layout else 6,
+            learning_rate=0.1,
+            subsample=0.9,
+            colsample_bytree=0.9,
+            random_state=42,
+            verbosity=0,
+        )
+    elif model_type == "lightgbm":
+        est = _ArrayLGBMRegressor(
+            n_estimators=80 if for_layout else 120,
+            max_depth=6 if for_layout else 8,
+            learning_rate=0.1,
+            random_state=42,
+            verbosity=-1,
+        )
+    elif model_type == "random_forest":
+        est = RandomForestRegressor(
+            n_estimators=80 if for_layout else 100,
+            max_depth=10 if for_layout else 12,
+            random_state=42,
+        )
+    else:
+        raise ValueError(f"未知模型类型: {model_type}")
+    return Pipeline([("scaler", StandardScaler()), ("reg", est)])
+
+
 def _positive_probability(clf: Pipeline, x: np.ndarray) -> float:
     if not hasattr(clf, "predict_proba"):
         if hasattr(clf, "decision_function"):
@@ -227,16 +328,21 @@ def _fit_classifier(clf: Pipeline, x: np.ndarray, y: np.ndarray) -> Pipeline:
     return clf
 
 
+def _fit_regressor(reg: Pipeline, x: np.ndarray, y: np.ndarray) -> Pipeline:
+    if len(y) == 0:
+        raise ValueError("训练标签为空")
+    reg.fit(x, y)
+    return reg
+
+
 @dataclass
 class SklearnPickingModel(PickingModel):
-    """两阶段模型：帧级 is_picking 检测 + 帧级 layout_layer/layout_column 预测。"""
+    """两阶段模型：帧级 is_picking + 帧级 layout_layer/column 归一化回归。"""
 
     model_type: str = "random_forest"
     picking_clf: Pipeline | None = None
-    layout_layer_clf: Pipeline | None = None
-    layout_column_clf: Pipeline | None = None
-    layout_layer_encoder: LabelEncoder | None = None
-    layout_column_encoder: LabelEncoder | None = None
+    layout_layer_reg: Pipeline | None = None
+    layout_column_reg: Pipeline | None = None
     frame_feature_names: list[str] = field(default_factory=list)
     box_feature_names: list[str] = field(default_factory=list)
     name: str = "sklearn_two_stage"
@@ -254,38 +360,44 @@ class SklearnPickingModel(PickingModel):
         layout_samples = [
             s
             for s in dataset.frame_samples
-            if s.is_picking and s.target_layout_layer > 0 and s.target_layout_column > 0
+            if s.is_picking and s.target_layout_layer_norm > 0 and s.target_layout_column_norm > 0
         ]
         if layout_samples:
             x_layout = np.vstack([s.x for s in layout_samples])
-            y_layer = np.array([int(s.target_layout_layer) for s in layout_samples], dtype=np.int32)
-            y_column = np.array([int(s.target_layout_column) for s in layout_samples], dtype=np.int32)
-            self.layout_layer_encoder = LabelEncoder()
-            self.layout_column_encoder = LabelEncoder()
-            y_layer_enc = self.layout_layer_encoder.fit_transform(y_layer)
-            y_column_enc = self.layout_column_encoder.fit_transform(y_column)
-            self.layout_layer_clf = _fit_classifier(
-                _make_classifier(self.model_type, for_layout=True),
+            y_layer = np.array([float(s.target_layout_layer_norm) for s in layout_samples], dtype=np.float64)
+            y_column = np.array([float(s.target_layout_column_norm) for s in layout_samples], dtype=np.float64)
+            self.layout_layer_reg = _fit_regressor(
+                _make_regressor(self.model_type, for_layout=True),
                 x_layout,
-                y_layer_enc,
+                y_layer,
             )
-            self.layout_column_clf = _fit_classifier(
-                _make_classifier(self.model_type, for_layout=True),
+            self.layout_column_reg = _fit_regressor(
+                _make_regressor(self.model_type, for_layout=True),
                 x_layout,
-                y_column_enc,
+                y_column,
             )
 
-    def predict_layout(self, x: np.ndarray) -> tuple[int, int]:
-        if self.layout_layer_clf is None or self.layout_column_clf is None:
-            return 0, 0
-        if self.layout_layer_encoder is None or self.layout_column_encoder is None:
-            return 0, 0
+    def predict_layout_norm(self, x: np.ndarray) -> tuple[float, float]:
+        if self.layout_layer_reg is None or self.layout_column_reg is None:
+            return 0.0, 0.0
         x2 = x.reshape(1, -1)
-        layer_enc = int(self.layout_layer_clf.predict(x2)[0])
-        column_enc = int(self.layout_column_clf.predict(x2)[0])
-        layer = int(self.layout_layer_encoder.inverse_transform([layer_enc])[0])
-        column = int(self.layout_column_encoder.inverse_transform([column_enc])[0])
-        return layer, column
+        layer_norm = float(self.layout_layer_reg.predict(x2)[0])
+        column_norm = float(self.layout_column_reg.predict(x2)[0])
+        return max(0.0, layer_norm), max(0.0, column_norm)
+
+    def predict_layout(
+        self,
+        x: np.ndarray,
+        *,
+        box_layout: dict[str, BoxNumericCode] | None = None,
+    ) -> tuple[float, float, int, int]:
+        layer_norm, column_norm = self.predict_layout_norm(x)
+        if not box_layout:
+            return layer_norm, column_norm, 0, 0
+        max_layer, max_column = record_layout_denorm_bounds(box_layout)
+        layer = denormalize_layout_layer(layer_norm, max_layer)
+        column = denormalize_layout_column(column_norm, max_column)
+        return layer_norm, column_norm, layer, column
 
     def predict_frame(
         self,
@@ -301,12 +413,17 @@ class SklearnPickingModel(PickingModel):
         prob = _positive_probability(self.picking_clf, x2)
         is_picking = bool(self.picking_clf.predict(x2)[0])
 
+        layer_norm = 0.0
+        column_norm = 0.0
         predicted_layer = 0
         predicted_column = 0
         predicted_tokens: list[str] = []
-        if is_picking and self.layout_layer_clf is not None and self.layout_column_clf is not None:
-            predicted_layer, predicted_column = self.predict_layout(x)
-            if box_layout:
+        if is_picking and self.layout_layer_reg is not None and self.layout_column_reg is not None:
+            layer_norm, column_norm, predicted_layer, predicted_column = self.predict_layout(
+                x,
+                box_layout=box_layout,
+            )
+            if box_layout and predicted_layer > 0 and predicted_column > 0:
                 predicted_tokens = resolve_box_tokens_by_layout(
                     box_layout,
                     layer=predicted_layer,
@@ -318,6 +435,8 @@ class SklearnPickingModel(PickingModel):
             frame_idx=frame_idx,
             is_picking=is_picking,
             picking_prob=prob,
+            predicted_layout_layer_norm=layer_norm,
+            predicted_layout_column_norm=column_norm,
             predicted_layout_layer=predicted_layer,
             predicted_layout_column=predicted_column,
             predicted_box_tokens=predicted_tokens,
@@ -333,18 +452,14 @@ class SklearnPickingModel(PickingModel):
             "frame_feature_names": self.frame_feature_names,
             "box_feature_names": self.box_feature_names,
             "stage1_target": "is_picking",
-            "stage2_targets": ["target_layout_layer", "target_layout_column"],
+            "stage2_targets": ["target_layout_layer_norm", "target_layout_column_norm"],
         }
         (path / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
         joblib.dump(self.picking_clf, path / "picking_clf.pkl")
-        if self.layout_layer_clf is not None:
-            joblib.dump(self.layout_layer_clf, path / "layout_layer_clf.pkl")
-        if self.layout_column_clf is not None:
-            joblib.dump(self.layout_column_clf, path / "layout_column_clf.pkl")
-        if self.layout_layer_encoder is not None:
-            joblib.dump(self.layout_layer_encoder, path / "layout_layer_encoder.pkl")
-        if self.layout_column_encoder is not None:
-            joblib.dump(self.layout_column_encoder, path / "layout_column_encoder.pkl")
+        if self.layout_layer_reg is not None:
+            joblib.dump(self.layout_layer_reg, path / "layout_layer_reg.pkl")
+        if self.layout_column_reg is not None:
+            joblib.dump(self.layout_column_reg, path / "layout_column_reg.pkl")
 
     @classmethod
     def load(cls, path: Path) -> SklearnPickingModel:
@@ -357,14 +472,14 @@ class SklearnPickingModel(PickingModel):
             name=meta.get("name", "sklearn_two_stage"),
         )
         model.picking_clf = joblib.load(path / "picking_clf.pkl")
-        layer_path = path / "layout_layer_clf.pkl"
-        column_path = path / "layout_column_clf.pkl"
-        model.layout_layer_clf = joblib.load(layer_path) if layer_path.is_file() else None
-        model.layout_column_clf = joblib.load(column_path) if column_path.is_file() else None
-        layer_enc_path = path / "layout_layer_encoder.pkl"
-        column_enc_path = path / "layout_column_encoder.pkl"
-        model.layout_layer_encoder = joblib.load(layer_enc_path) if layer_enc_path.is_file() else None
-        model.layout_column_encoder = joblib.load(column_enc_path) if column_enc_path.is_file() else None
+        layer_path = path / "layout_layer_reg.pkl"
+        column_path = path / "layout_column_reg.pkl"
+        if not layer_path.is_file():
+            layer_path = path / "layout_layer_clf.pkl"
+        if not column_path.is_file():
+            column_path = path / "layout_column_clf.pkl"
+        model.layout_layer_reg = joblib.load(layer_path) if layer_path.is_file() else None
+        model.layout_column_reg = joblib.load(column_path) if column_path.is_file() else None
         return model
 
 
