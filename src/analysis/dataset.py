@@ -29,6 +29,7 @@ class FrameSample:
     x: np.ndarray
     is_picking: bool
     confirmed_box_tokens: list[str]
+    confirmed_box_codes: list[int]
 
 
 @dataclass
@@ -36,6 +37,10 @@ class BoxSample:
     record_id: str
     frame_idx: int
     box_token: str
+    box_code: int
+    box_shelf_side: int
+    box_layer: int
+    box_column: int
     x: np.ndarray
     is_target: bool
 
@@ -178,19 +183,26 @@ def build_dataset(
                     x=frame_feat.to_vector(frame_feature_names),
                     is_picking=label.is_picking,
                     confirmed_box_tokens=list(label.confirmed_box_tokens),
+                    confirmed_box_codes=list(label.confirmed_box_codes),
                 )
             )
 
             if label.is_picking:
-                confirmed = set(label.confirmed_box_tokens)
+                confirmed_codes = set(label.confirmed_box_codes)
                 for pb in reg.extract_per_box_features_from_context(ctx):
+                    layout_entry = record.box_layout.get(pb.box_token)
+                    box_code = layout_entry.encode() if layout_entry else 0
                     box_samples.append(
                         BoxSample(
                             record_id=record.record_id,
                             frame_idx=frame.frame_idx,
                             box_token=pb.box_token,
+                            box_code=box_code,
+                            box_shelf_side=layout_entry.shelf_side if layout_entry else 0,
+                            box_layer=layout_entry.layer if layout_entry else 0,
+                            box_column=layout_entry.column if layout_entry else 0,
                             x=pb.to_vector(box_feature_names),
-                            is_target=pb.box_token in confirmed,
+                            is_target=box_code in confirmed_codes,
                         )
                     )
 

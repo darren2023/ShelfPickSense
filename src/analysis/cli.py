@@ -423,6 +423,7 @@ def _cmd_export_features(args: argparse.Namespace) -> int:
             "frame_idx": sample.frame_idx,
             "is_picking": sample.is_picking,
             "confirmed_box_tokens": sample.confirmed_box_tokens,
+            "confirmed_box_codes": sample.confirmed_box_codes,
         }
         row.update(dict(zip(dataset.frame_feature_names, sample.x.tolist(), strict=True)))
         frame_rows.append(row)
@@ -433,6 +434,10 @@ def _cmd_export_features(args: argparse.Namespace) -> int:
             "record_id": sample.record_id,
             "frame_idx": sample.frame_idx,
             "box_token": sample.box_token,
+            "box_code": sample.box_code,
+            "box_shelf_side": sample.box_shelf_side,
+            "box_layer": sample.box_layer,
+            "box_column": sample.box_column,
             "is_target": sample.is_target,
         }
         row.update(dict(zip(dataset.box_feature_names, sample.x.tolist(), strict=True)))
@@ -582,6 +587,98 @@ def _cmd_infer_frame(args: argparse.Namespace) -> int:
         if out_file:
             out_file.close()
     return 0
+
+
+def _cmd_box_layout(args: argparse.Namespace) -> int:
+    import csv
+    import sys
+
+    from analysis.annotation import load_annotation
+    from analysis.box_layout import list_box_layout_rows
+    from analysis.constants import ANNOTATION_FILE
+
+    if args.record_dir:
+        ann_path = Path(args.record_dir).resolve() / ANNOTATION_FILE
+    else:
+        ann_path = Path(args.annotation).resolve()
+
+    if not ann_path.is_file():
+        logger.error("未找到 annotation 文件: {}", ann_path)
+        return 1
+
+    annotation = load_annotation(ann_path)
+    rows = list_box_layout_rows(annotation)
+    payload = {
+        "annotation": str(ann_path),
+        "box_count": len(rows),
+        "boxes": [row.to_dict() for row in rows],
+    }
+
+    output_format = str(args.format or "json").lower()
+    if output_format == "json":
+        if args.output:
+            out_path = Path(args.output)
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            out_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+            logger.info("货框布局已写入: {} boxes={}", out_path, len(rows))
+        else:
+            _log_json(payload)
+        return 0
+
+    if output_format == "csv":
+        fieldnames = list(payload["boxes"][0].keys()) if rows else []
+        if args.output:
+            out_path = Path(args.output)
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            with out_path.open("w", encoding="utf-8", newline="") as f:
+                writer = csv.DictWriter(f, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerows(payload["boxes"])
+            logger.info("货框布局已写入: {} boxes={}", out_path, len(rows))
+        else:
+            writer = csv.DictWriter(sys.stdout, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(payload["boxes"])
+        return 0
+
+    if output_format == "table":
+        header = (
+            f"{'token':<12} {'box_id':>6} {'side':>4} {'layer':>5} {'col':>4} {'code':>4} "
+            f"{'cx':>8} {'cy':>8} {'ann_L':>5} {'ann_C':>5}"
+        )
+        logger.info("annotation={} box_count={}", ann_path, len(rows))
+        logger.info(header)
+        for row in rows:
+            logger.info(
+                "{:<12} {:>6} {:>4} {:>5} {:>4} {:>4} {:>8.1f} {:>8.1f} {:>5} {:>5}",
+                row.token,
+                row.box_id,
+                row.shelf_side,
+                row.layer,
+                row.column,
+                row.box_code,
+                row.centroid_x,
+                row.centroid_y,
+                row.annotation_layer if row.annotation_layer is not None else "-",
+                row.annotation_column if row.annotation_column is not None else "-",
+            )
+        if args.output:
+            out_path = Path(args.output)
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            lines = [header]
+            for row in rows:
+                lines.append(
+                    f"{row.token:<12} {row.box_id:>6} {row.shelf_side:>4} {row.layer:>5} {row.column:>4} {row.box_code:>4} "
+                    f"{row.centroid_x:>8.1f} {row.centroid_y:>8.1f} "
+                    f"{row.annotation_layer if row.annotation_layer is not None else '-':>5} "
+                    f"{row.annotation_column if row.annotation_column is not None else '-':>5}"
+                )
+            out_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            logger.info("货框布局已写入: {}", out_path)
+        return 0
+
+    logger.error("不支持的输出格式: {}", args.format)
+    return 1
 
 
 def _add_logging_args(parser: argparse.ArgumentParser) -> None:
@@ -761,6 +858,20 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_logging_args(p_viz)
     p_viz.set_defaults(func=_cmd_viz_frames)
+
+    p_box_layout = sub.add_parser("box-layout", help="读取 annotation 并输出各货框数值布局")
+    source_group = p_box_layout.add_mutually_exclusive_group(required=True)
+    source_group.add_argument("--annotation", default="", help="annotation.json 路径")
+    source_group.add_argument("--record-dir", default="", help="记录目录（读取其中的 annotation.json）")
+    p_box_layout.add_argument(
+        "--format",
+        default="json",
+        choices=["json", "csv", "table"],
+        help="输出格式（默认 json）",
+    )
+    p_box_layout.add_argument("--output", default="", help="输出文件路径（默认打印到 stdout）")
+    _add_logging_args(p_box_layout)
+    p_box_layout.set_defaults(func=_cmd_box_layout)
 
     return parser
 

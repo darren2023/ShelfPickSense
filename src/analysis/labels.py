@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from analysis.box_layout import BoxNumericCode, resolve_layout_token
+
 
 def extract_confirmed_box_tokens(entry: dict[str, Any]) -> list[str]:
     raw_list = entry.get("confirmed_box_tokens")
@@ -23,6 +25,7 @@ class FrameLabel:
     frame_idx: int
     is_picking: bool = False
     confirmed_box_tokens: list[str] = field(default_factory=list)
+    confirmed_box_codes: list[int] = field(default_factory=list)
 
 
 @dataclass
@@ -35,7 +38,7 @@ class RecordLabels:
     def label_for(self, frame_idx: int) -> FrameLabel:
         if frame_idx in self.frame_labels:
             return self.frame_labels[frame_idx]
-        return FrameLabel(frame_idx=frame_idx, is_picking=False, confirmed_box_tokens=[])
+        return FrameLabel(frame_idx=frame_idx, is_picking=False, confirmed_box_tokens=[], confirmed_box_codes=[])
 
 
 def load_event_review(path: Path) -> dict[str, Any]:
@@ -78,3 +81,25 @@ def build_labels_from_event_review(
             confirmed_box_tokens=confirmed,
         )
     return labels
+
+
+def enrich_labels_with_box_layout(
+    labels: RecordLabels,
+    layout: dict[str, BoxNumericCode],
+) -> None:
+    """将 event_review 中的 Box_<id> 等形式解析为 canonical token，并写入数值编码。"""
+    for label in labels.frame_labels.values():
+        if not label.confirmed_box_tokens:
+            label.confirmed_box_codes = []
+            continue
+        canonical_tokens: list[str] = []
+        codes: list[int] = []
+        for token in label.confirmed_box_tokens:
+            canonical = resolve_layout_token(token, layout)
+            entry = layout.get(canonical)
+            if entry is None:
+                continue
+            canonical_tokens.append(canonical)
+            codes.append(entry.encode())
+        label.confirmed_box_tokens = canonical_tokens
+        label.confirmed_box_codes = codes
