@@ -14,6 +14,41 @@ def fixture_data_dir(tmp_path: Path) -> Path:
     return make_fixture_record(tmp_path / "record_001")
 
 
+def test_layout_features_on_picking_frame(fixture_data_dir: Path):
+    from analysis.features.registry import default_registry
+    from analysis.records import load_record
+
+    record = load_record(fixture_data_dir)
+    reg = default_registry()
+    frame = next(f for f in record.frames() if f.frame_idx == 6)
+    per_box = reg.extract_per_box_features(record, frame)
+    a1 = next(pb for pb in per_box if pb.box_token == "S1:A1")
+
+    assert a1.features["layout.shelf_side"] == pytest.approx(1.0)
+    assert a1.features["layout.layout_layer"] == pytest.approx(1.0)
+    assert a1.features["layout.layout_column"] == pytest.approx(2.0)
+    assert a1.features["layout.shelf_layer_count"] == pytest.approx(1.0)
+    assert a1.features["layout.shelf_column_count_mean"] == pytest.approx(2.0)
+
+
+def test_layout_supervision_in_dataset(fixture_data_dir: Path):
+    from analysis.dataset import build_dataset
+    from analysis.features.registry import default_registry
+    from analysis.records import load_record
+
+    record = load_record(fixture_data_dir)
+    dataset = build_dataset([record], default_registry())
+    frame = next(s for s in dataset.frame_samples if s.frame_idx == 6)
+    assert frame.is_picking
+    assert frame.target_layout_layer == 1
+    assert frame.target_layout_column == 2
+
+    target = next(s for s in dataset.box_samples if s.box_token == "S1:A1")
+    assert target.is_target
+    assert target.target_layout_layer == 1
+    assert target.target_layout_column == 2
+
+
 def test_spatial_wrist_and_foot_distance(fixture_data_dir: Path):
     from analysis.features.registry import default_registry
     from analysis.records import load_record

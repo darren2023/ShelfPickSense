@@ -2,6 +2,7 @@
 
 from analysis.features.base import FeatureContext, FeatureExtractor, FeatureSet
 from analysis.features.registry import FeatureRegistry, default_registry
+from analysis.features.layout import BoxLayoutFeatureExtractor
 from analysis.features.rule_engine import RuleEngineFeatureExtractor
 from analysis.features.selection import FeatureSelection, load_feature_selection
 from analysis.features.skeleton import SkeletonFeatureExtractor
@@ -18,6 +19,7 @@ __all__ = [
     "load_feature_selection",
     "SkeletonFeatureExtractor",
     "BoxSpatialFeatureExtractor",
+    "BoxLayoutFeatureExtractor",
     "TemporalFeatureExtractor",
     "RuleEngineFeatureExtractor",
 ]

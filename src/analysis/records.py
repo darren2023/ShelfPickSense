@@ -10,7 +10,7 @@ from typing import Any
 import pandas as pd
 
 from analysis.annotation import BoxInfo, annotation_size, build_box_index, load_annotation
-from analysis.box_layout import BoxNumericCode, build_box_layout
+from analysis.box_layout import BoxNumericCode, ShelfLayoutStats, build_box_layout, compute_shelf_layout_stats
 from analysis.constants import (
     ANNOTATION_FILE,
     DEFAULT_POSE_INFER_HEIGHT,
@@ -47,6 +47,7 @@ class RecordData:
     box_tokens: list[str]
     box_index: dict[str, BoxInfo] = field(default_factory=dict)
     box_layout: dict[str, BoxNumericCode] = field(default_factory=dict)
+    shelf_layout_stats: dict[str, ShelfLayoutStats] = field(default_factory=dict)
     _frames_cache: list[FramePersons] | None = field(default=None, repr=False, compare=False)
     _frame_index_cache: dict[int, FramePersons] | None = field(default=None, repr=False, compare=False)
 
@@ -222,6 +223,7 @@ def load_record(record_dir: Path) -> RecordData:
     box_tokens = sorted(box_index.keys())
     ann_w, _ann_h = annotation_size(annotation)
     box_layout = build_box_layout(annotation, frame_width=ann_w)
+    shelf_layout_stats = compute_shelf_layout_stats(box_layout)
 
     frame_indices = sorted(int(v) for v in skeleton["frame_idx"].unique()) if not skeleton.empty else []
     labels = build_labels_from_event_review(
@@ -243,6 +245,7 @@ def load_record(record_dir: Path) -> RecordData:
         box_tokens=box_tokens,
         box_index=box_index,
         box_layout=box_layout,
+        shelf_layout_stats=shelf_layout_stats,
     )
 
 

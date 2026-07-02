@@ -257,8 +257,15 @@ def test_cli_export_features(fixture_data_dir: Path, tmp_path: Path):
     box_df = pd.read_parquet(box_path)
     assert len(frame_df) == 10
     assert len(box_df) == 6
-    assert {"record_id", "frame_idx", "is_picking", "confirmed_box_tokens"} <= set(frame_df.columns)
+    assert {"record_id", "frame_idx", "is_picking"} <= set(frame_df.columns)
+    assert {"target_layout_layer", "target_layout_column", "target_layout_shelf_side"} <= set(frame_df.columns)
     assert {"record_id", "frame_idx", "box_token", "is_target"} <= set(box_df.columns)
+    assert {"target_layout_layer", "target_layout_column", "target_layout_shelf_side"} <= set(box_df.columns)
+    assert "layout.shelf_side" in box_df.columns
+    assert "layout.layout_layer" in box_df.columns
+    assert "layout.layout_column" in box_df.columns
+    assert "layout.shelf_layer_count" in box_df.columns
+    assert "layout.shelf_column_count_mean" in box_df.columns
 
 
 def test_cli_feature_config_filters_export_and_train(fixture_data_dir: Path, tmp_path: Path):
@@ -356,11 +363,11 @@ def test_cli_export_features_all_formats(fixture_data_dir: Path, tmp_path: Path)
 
     frame_csv = pd.read_csv(output_dir / "frame_features.csv")
     assert len(frame_csv) == 10
-    assert "confirmed_box_tokens" in frame_csv.columns
+    assert "target_layout_layer" in frame_csv.columns
 
     first_jsonl = (output_dir / "frame_features.jsonl").read_text(encoding="utf-8").splitlines()[0]
     first_row = json.loads(first_jsonl)
-    assert {"record_id", "frame_idx", "is_picking", "confirmed_box_tokens"} <= set(first_row)
+    assert {"record_id", "frame_idx", "is_picking", "target_layout_layer"} <= set(first_row)
 
     meta = json.loads((output_dir / "features_meta.json").read_text(encoding="utf-8"))
     assert meta["output_format"] == "all"

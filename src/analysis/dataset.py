@@ -22,14 +22,25 @@ _SKELETON_PROBE_INDICES = (
 )
 
 
+def _layout_target_from_label(record: RecordData, label) -> tuple[int, int, int]:
+    """从 confirmed 货框取几何推导的监督值 (shelf_side, layout_layer, layout_column)。"""
+    if not label.confirmed_box_tokens:
+        return 0, 0, 0
+    entry = record.box_layout.get(label.confirmed_box_tokens[0])
+    if entry is None:
+        return 0, 0, 0
+    return entry.shelf_side, entry.layer, entry.column
+
+
 @dataclass
 class FrameSample:
     record_id: str
     frame_idx: int
     x: np.ndarray
     is_picking: bool
-    confirmed_box_tokens: list[str]
-    confirmed_box_codes: list[int]
+    target_layout_shelf_side: int = 0
+    target_layout_layer: int = 0
+    target_layout_column: int = 0
 
 
 @dataclass
@@ -38,11 +49,11 @@ class BoxSample:
     frame_idx: int
     box_token: str
     box_code: int
-    box_shelf_side: int
-    box_layer: int
-    box_column: int
     x: np.ndarray
     is_target: bool
+    target_layout_shelf_side: int = 0
+    target_layout_layer: int = 0
+    target_layout_column: int = 0
 
 
 @dataclass
@@ -175,6 +186,7 @@ def build_dataset(
         for frame in frames:
             ctx = FeatureContext.from_record(record, frame, frame_index=frame_index)
             label = record.labels.label_for(frame.frame_idx)
+            target_side, target_layer, target_col = _layout_target_from_label(record, label)
             frame_feat = reg.extract_frame_features_from_context(ctx)
             frame_samples.append(
                 FrameSample(
@@ -182,8 +194,9 @@ def build_dataset(
                     frame_idx=frame.frame_idx,
                     x=frame_feat.to_vector(frame_feature_names),
                     is_picking=label.is_picking,
-                    confirmed_box_tokens=list(label.confirmed_box_tokens),
-                    confirmed_box_codes=list(label.confirmed_box_codes),
+                    target_layout_shelf_side=target_side if label.is_picking else 0,
+                    target_layout_layer=target_layer if label.is_picking else 0,
+                    target_layout_column=target_col if label.is_picking else 0,
                 )
             )
 
@@ -198,11 +211,11 @@ def build_dataset(
                             frame_idx=frame.frame_idx,
                             box_token=pb.box_token,
                             box_code=box_code,
-                            box_shelf_side=layout_entry.shelf_side if layout_entry else 0,
-                            box_layer=layout_entry.layer if layout_entry else 0,
-                            box_column=layout_entry.column if layout_entry else 0,
                             x=pb.to_vector(box_feature_names),
                             is_target=box_code in confirmed_codes,
+                            target_layout_shelf_side=layout_entry.shelf_side if layout_entry else 0,
+                            target_layout_layer=layout_entry.layer if layout_entry else 0,
+                            target_layout_column=layout_entry.column if layout_entry else 0,
                         )
                     )
 

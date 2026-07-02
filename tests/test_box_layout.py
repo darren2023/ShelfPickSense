@@ -95,6 +95,20 @@ def test_infer_shelf_side_uses_annotation_midline():
     assert infer_shelf_side_from_x_coords([100.0, 150.0, 310.0, 500.0], frame_width=640.0) == 1
 
 
+def test_compute_shelf_layout_stats():
+    from analysis.box_layout import BoxNumericCode, compute_shelf_layout_stats
+
+    layout = {
+        "81:1013": BoxNumericCode(shelf_side=2, layer=1, column=1, shelf_code="81", box_id="1013"),
+        "81:1016": BoxNumericCode(shelf_side=2, layer=1, column=4, shelf_code="81", box_id="1016"),
+        "81:1005": BoxNumericCode(shelf_side=2, layer=3, column=1, shelf_code="81", box_id="1005"),
+        "81:1008": BoxNumericCode(shelf_side=2, layer=3, column=4, shelf_code="81", box_id="1008"),
+    }
+    stats = compute_shelf_layout_stats(layout)["81"]
+    assert stats.layer_count == 3
+    assert stats.column_count_mean == pytest.approx(4.0)
+
+
 def test_two_shelf_side_layer_column_rules():
     layout = build_box_layout(_two_shelf_annotation(), frame_width=640.0)
 

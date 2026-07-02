@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -58,6 +59,40 @@ class BoxLayoutRow:
             "annotation_layer": self.annotation_layer,
             "annotation_column": self.annotation_column,
         }
+
+
+@dataclass(frozen=True)
+class ShelfLayoutStats:
+    """单个货架的布局统计（基于几何推导的层/列，非 annotation 字段）。"""
+
+    shelf_code: str
+    layer_count: int
+    column_count_mean: float
+
+
+def compute_shelf_layout_stats(layout: dict[str, BoxNumericCode]) -> dict[str, ShelfLayoutStats]:
+    """按货架统计层数，以及各层列数的平均值。"""
+    by_shelf: dict[str, list[BoxNumericCode]] = defaultdict(list)
+    for entry in layout.values():
+        key = entry.shelf_code or "_default"
+        by_shelf[key].append(entry)
+
+    stats: dict[str, ShelfLayoutStats] = {}
+    for shelf_code, boxes in by_shelf.items():
+        if not boxes:
+            continue
+        layer_count = max(box.layer for box in boxes)
+        columns_by_layer: dict[int, list[int]] = defaultdict(list)
+        for box in boxes:
+            columns_by_layer[box.layer].append(box.column)
+        per_layer_counts = [max(cols) for cols in columns_by_layer.values() if cols]
+        column_count_mean = sum(per_layer_counts) / len(per_layer_counts) if per_layer_counts else 0.0
+        stats[shelf_code] = ShelfLayoutStats(
+            shelf_code=shelf_code,
+            layer_count=layer_count,
+            column_count_mean=column_count_mean,
+        )
+    return stats
 
 
 @dataclass

@@ -422,8 +422,9 @@ def _cmd_export_features(args: argparse.Namespace) -> int:
             "record_id": sample.record_id,
             "frame_idx": sample.frame_idx,
             "is_picking": sample.is_picking,
-            "confirmed_box_tokens": sample.confirmed_box_tokens,
-            "confirmed_box_codes": sample.confirmed_box_codes,
+            "target_layout_shelf_side": sample.target_layout_shelf_side,
+            "target_layout_layer": sample.target_layout_layer,
+            "target_layout_column": sample.target_layout_column,
         }
         row.update(dict(zip(dataset.frame_feature_names, sample.x.tolist(), strict=True)))
         frame_rows.append(row)
@@ -435,10 +436,10 @@ def _cmd_export_features(args: argparse.Namespace) -> int:
             "frame_idx": sample.frame_idx,
             "box_token": sample.box_token,
             "box_code": sample.box_code,
-            "box_shelf_side": sample.box_shelf_side,
-            "box_layer": sample.box_layer,
-            "box_column": sample.box_column,
             "is_target": sample.is_target,
+            "target_layout_shelf_side": sample.target_layout_shelf_side,
+            "target_layout_layer": sample.target_layout_layer,
+            "target_layout_column": sample.target_layout_column,
         }
         row.update(dict(zip(dataset.box_feature_names, sample.x.tolist(), strict=True)))
         box_rows.append(row)
