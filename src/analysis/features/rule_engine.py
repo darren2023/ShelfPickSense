@@ -155,6 +155,10 @@ def window_hit_count_for_track(
     window: int | None = None,
 ) -> int:
     lookback = window if window is not None else params.window_frames
+    cache_key = (track_id, lookback, box_token)
+    if cache_key in ctx._rule_hit_cache:
+        return ctx._rule_hit_cache[cache_key]
+
     hits = 0
     for offset in range(lookback):
         hist_ctx = _frame_context(ctx, offset)
@@ -169,7 +173,32 @@ def window_hit_count_for_track(
                 hits += 1
         elif box_token in tokens:
             hits += 1
+
+    ctx._rule_hit_cache[cache_key] = hits
     return hits
+
+
+def window_hit_counts_by_box(
+    ctx: FeatureContext,
+    track_id: int | None,
+    params: RuleEngineParams,
+    *,
+    window: int | None = None,
+) -> dict[str, int]:
+    """一次滑窗遍历，返回每个货框的命中帧数。"""
+    lookback = window if window is not None else params.window_frames
+    counts = dict.fromkeys(ctx.box_tokens, 0)
+    for offset in range(lookback):
+        hist_ctx = _frame_context(ctx, offset)
+        if hist_ctx is None:
+            break
+        person = find_person_by_track(hist_ctx.frame, track_id)
+        if person is None:
+            continue
+        for token in rule_collision_tokens_for_person(person, hist_ctx, params):
+            if token in counts:
+                counts[token] += 1
+    return counts
 
 
 def _box_hand_collision_flags(
@@ -177,11 +206,17 @@ def _box_hand_collision_flags(
     token: str,
     ctx: FeatureContext,
     params: RuleEngineParams,
+    *,
+    hand_points: list[tuple[float, float, str]] | None = None,
+    margin: float | None = None,
 ) -> tuple[float, float, float, float]:
     box = ctx.box_index.get(token)
     if box is None:
         return 0.0, 0.0, 0.0, -1.0
-    margin = collision_margin(person, params)
+    if hand_points is None:
+        hand_points = collect_rule_hand_points(person, params)
+    if margin is None:
+        margin = collision_margin(person, params)
     scale = max(ctx.record.infer_width, ctx.record.infer_height, 1.0)
     wrist_hit = 0.0
     forearm_hit = 0.0
@@ -265,19 +300,41 @@ class RuleEngineFeatureExtractor(FeatureExtractor):
 
     def extract_per_box(self, ctx: FeatureContext) -> dict[str, dict[str, float]]:
         params = self.params
+        active_tokens = rule_collision_tokens_for_frame(ctx, params)
         primary_track = select_primary_track_id(ctx)
         primary_person = find_person_by_track(ctx.frame, primary_track)
         if primary_person is None and ctx.frame.persons:
             primary_person = sorted_persons(ctx.frame)[0]
 
+        hand_points: list[tuple[float, float, str]] = []
+        margin = 0.0
+        nearest_hits: list[str] = []
+        if primary_person is not None:
+            hand_points = collect_rule_hand_points(primary_person, params)
+            margin = collision_margin(primary_person, params)
+            nearest_hits = [
+                nearest_box_token_for_point(px, py, margin, ctx.box_index)
+                for px, py, _kind in hand_points
+            ]
+
+        window_counts: dict[int, dict[str, int]] = {
+            window: window_hit_counts_by_box(ctx, primary_track, params, window=window)
+            for _, window in RULE_WINDOW_PAIRS
+        }
+
         out: dict[str, dict[str, float]] = {}
         for token in ctx.box_tokens:
             feats: dict[str, float] = {
-                "frame_collision": 1.0 if token in rule_collision_tokens_for_frame(ctx, params) else 0.0,
+                "frame_collision": 1.0 if token in active_tokens else 0.0,
             }
             if primary_person is not None:
                 wrist_hit, forearm_hit, hand_hit, signed_norm = _box_hand_collision_flags(
-                    primary_person, token, ctx, params
+                    primary_person,
+                    token,
+                    ctx,
+                    params,
+                    hand_points=hand_points,
+                    margin=margin,
                 )
                 feats.update(
                     {
@@ -285,16 +342,9 @@ class RuleEngineFeatureExtractor(FeatureExtractor):
                         "forearm_collision": forearm_hit,
                         "hand_collision": hand_hit,
                         "max_signed_dist_norm": signed_norm,
+                        "nearest_collision": 1.0 if token in nearest_hits else 0.0,
                     }
                 )
-                nearest = ""
-                margin = collision_margin(primary_person, params)
-                for px, py, _kind in collect_rule_hand_points(primary_person, params):
-                    hit = nearest_box_token_for_point(px, py, margin, ctx.box_index)
-                    if hit:
-                        nearest = hit
-                        break
-                feats["nearest_collision"] = 1.0 if nearest == token else 0.0
             else:
                 feats.update(
                     {
@@ -307,7 +357,7 @@ class RuleEngineFeatureExtractor(FeatureExtractor):
                 )
 
             for min_hits, window in RULE_WINDOW_PAIRS:
-                hits = window_hit_count_for_track(ctx, primary_track, params, box_token=token, window=window)
+                hits = window_counts[window].get(token, 0)
                 feats[f"window_hit_{min_hits}_{window}"] = 1.0 if hits >= min_hits else 0.0
                 feats[f"window_hits_{window}"] = float(hits)
             out[token] = feats

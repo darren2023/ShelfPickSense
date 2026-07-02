@@ -9,7 +9,7 @@ from typing import Any
 
 import pandas as pd
 
-from analysis.annotation import annotation_size, build_box_index, load_annotation
+from analysis.annotation import BoxInfo, annotation_size, build_box_index, load_annotation
 from analysis.constants import (
     ANNOTATION_FILE,
     DEFAULT_POSE_INFER_HEIGHT,
@@ -39,7 +39,9 @@ class RecordData:
     infer_width: float
     infer_height: float
     box_tokens: list[str]
+    box_index: dict[str, BoxInfo] = field(default_factory=dict)
     _frames_cache: list[FramePersons] | None = field(default=None, repr=False, compare=False)
+    _frame_index_cache: dict[int, FramePersons] | None = field(default=None, repr=False, compare=False)
 
     def frames(self) -> list[FramePersons]:
         if self._frames_cache is not None:
@@ -57,7 +59,10 @@ class RecordData:
         return grouped
 
     def frame_index(self) -> dict[int, FramePersons]:
-        return {frame.frame_idx: frame for frame in self.frames()}
+        if self._frame_index_cache is not None:
+            return self._frame_index_cache
+        self._frame_index_cache = {frame.frame_idx: frame for frame in self.frames()}
+        return self._frame_index_cache
 
 
 def _row_to_person(row: pd.Series) -> dict[str, Any]:
@@ -226,6 +231,7 @@ def load_record(record_dir: Path) -> RecordData:
         infer_width=infer_w,
         infer_height=infer_h,
         box_tokens=box_tokens,
+        box_index=box_index,
     )
 
 

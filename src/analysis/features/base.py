@@ -21,6 +21,9 @@ class FeatureContext:
     box_index: dict[str, BoxInfo]
     box_tokens: list[str]
     frame_index: dict[int, FramePersons] = field(default_factory=dict)
+    _rule_hit_cache: dict[tuple[int | None, int, str | None], int] = field(
+        default_factory=dict, repr=False, compare=False
+    )
 
     def prior_frame(self, offset: int) -> FramePersons | None:
         """按帧序号偏移取历史帧。offset=0 为当前帧，offset=1 为上一帧。"""
@@ -38,17 +41,18 @@ class FeatureContext:
         *,
         frame_index: dict[int, FramePersons] | None = None,
     ) -> FeatureContext:
-        box_index = build_box_index(
+        box_index = record.box_index if record.box_index else build_box_index(
             record.annotation,
             infer_w=record.infer_width,
             infer_h=record.infer_height,
         )
         idx = frame_index if frame_index is not None else record.frame_index()
+        tokens = record.box_tokens if record.box_tokens else sorted(box_index.keys())
         return cls(
             record=record,
             frame=frame,
             box_index=box_index,
-            box_tokens=sorted(box_index.keys()),
+            box_tokens=tokens,
             frame_index=idx,
         )
 

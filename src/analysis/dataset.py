@@ -8,6 +8,7 @@ import numpy as np
 from loguru import logger
 
 from analysis.constants import LEFT_SHOULDER_IDX, LEFT_WRIST_IDX, RIGHT_SHOULDER_IDX, RIGHT_WRIST_IDX
+from analysis.features.base import FeatureContext
 from analysis.features.registry import FeatureRegistry, default_registry
 from analysis.features.selection import FeatureSelection
 from analysis.features.tracking import MIN_KEYPOINT_SCORE, get_keypoint
@@ -157,6 +158,7 @@ def build_dataset(
                 box_feature_names = feature_selection.select_box(box_feature_names)
 
         frames = record.frames()
+        frame_index = record.frame_index()
         logger.info(
             "提取特征 [{}/{}]: record={} frames={}",
             record_index,
@@ -166,8 +168,9 @@ def build_dataset(
         )
 
         for frame in frames:
+            ctx = FeatureContext.from_record(record, frame, frame_index=frame_index)
             label = record.labels.label_for(frame.frame_idx)
-            frame_feat = reg.extract_frame_features(record, frame)
+            frame_feat = reg.extract_frame_features_from_context(ctx)
             frame_samples.append(
                 FrameSample(
                     record_id=record.record_id,
@@ -180,7 +183,7 @@ def build_dataset(
 
             if label.is_picking:
                 confirmed = set(label.confirmed_box_tokens)
-                for pb in reg.extract_per_box_features(record, frame):
+                for pb in reg.extract_per_box_features_from_context(ctx):
                     box_samples.append(
                         BoxSample(
                             record_id=record.record_id,
