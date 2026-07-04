@@ -259,6 +259,177 @@ def _cmd_infer_rule(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_infer_collision_record(
+    record,
+    CollisionProcessor,
+    *,
+    infer_width: float | None,
+    infer_height: float | None,
+    fps: float,
+    max_frames: int,
+    realtime: bool,
+    video: str,
+    alarm_min_consecutive_frames: int,
+    alarm_cooldown_frames: int,
+    pose_frame_interval: int,
+    out_file,
+) -> int:
+    """对单条记录执行 collision.py 逐帧推理，返回处理的帧数。"""
+    import numpy as np
+
+    # 确保 box_index 存在
+    if not record.box_index:
+        from analysis.annotation import build_box_index
+        record.box_index = build_box_index(
+            record.annotation,
+            infer_w=record.infer_width,
+            infer_h=record.infer_height,
+        )
+
+    # 将 BoxIndex 转换为 CollisionProcessor 需要的格式
+    boxes = []
+    for token, box_info in record.box_index.items():
+        # 将 polygon 转换为 OpenCV contour 格式 (n, 1, 2)
+        polygon = np.array(box_info.polygon, dtype=np.float32).reshape(-1, 1, 2)
+        boxes.append({
+            "token": token,
+            "shelf_code": box_info.shelf_code,
+            "box_id": box_info.box_id,
+            "orig_contour": polygon,
+        })
+
+    processor = CollisionProcessor(
+        boxes,
+        alarm_min_consecutive_frames=alarm_min_consecutive_frames,
+        alarm_cooldown_frames=alarm_cooldown_frames,
+        video_fps=fps,
+    )
+
+    frames = record.frames()
+    if max_frames > 0:
+        frames = frames[:max_frames]
+    frame_interval = 1.0 / fps if realtime and fps > 0 else 0.0
+    processed_count = 0
+    logger.info(
+        "开始 collision.py 逐帧推理: record={}, video={}, frames={}, pose_frame_interval={}, realtime={}, fps={}",
+        record.record_id,
+        video or "",
+        len(frames),
+        pose_frame_interval,
+        realtime,
+        fps,
+    )
+
+    for idx, frame in enumerate(frames):
+        # 根据 pose_frame_interval 跳帧处理
+        if idx % pose_frame_interval != 0:
+            continue
+        pose_frame = {
+            "frame_idx": frame.frame_idx,
+            "persons": frame.persons,
+        }
+        result = processor.process(pose_frame)
+
+        processed_count += 1
+
+        # 构造与 infer-rule 兼容的输出格式
+        pred = {
+            "record_id": record.record_id,
+            "frame_idx": frame.frame_idx,
+            "is_picking": bool(result.get("alarm_collisions")),
+            "picking_prob": 1.0 if result.get("alarm_collisions") else 0.0,
+            "predicted_box_tokens": list(result.get("alarm_collisions") or result.get("collisions") or []),
+            "collision_collisions": list(result.get("collisions") or []),
+            "collision_alarm_collisions": list(result.get("alarm_collisions") or []),
+        }
+        line = json.dumps(pred, ensure_ascii=False)
+        if out_file:
+            out_file.write(line + "\n")
+        _log_jsonl(line)
+        if frame_interval > 0:
+            time.sleep(frame_interval)
+    return processed_count
+
+
+def _cmd_infer_collision(args: argparse.Namespace) -> int:
+    """调用 box_human_det/services/event_engine/collision.py 进行逐帧推理。"""
+    import sys
+    from pathlib import Path
+
+    # 添加 box_human_det 到 sys.path
+    box_human_det_path = Path(__file__).parent.parent.parent.parent / "box_human_det"
+    box_human_det_path = box_human_det_path.resolve()
+    if str(box_human_det_path) not in sys.path:
+        sys.path.insert(0, str(box_human_det_path))
+    logger.info("已添加到 sys.path: {}", box_human_det_path)
+
+    try:
+        from services.event_engine.collision import CollisionProcessor
+    except ImportError as e:
+        logger.error("无法导入 collision.py: {}", e)
+        return 1
+
+    from analysis.records import load_all_records
+
+    input_path = Path(args.record_dir)
+    records = load_all_records(input_path)
+    multi_record = len(records) > 1
+    merge_output = bool(args.output) and multi_record and Path(args.output).suffix == ".jsonl"
+
+    logger.info(
+        "collision.py 逐帧推理: input={}, records={}, output={}, merge_output={}",
+        input_path,
+        len(records),
+        args.output or "",
+        merge_output,
+    )
+
+    merge_file = None
+    total_frames = 0
+    try:
+        if merge_output:
+            merge_path = Path(args.output)
+            merge_path.parent.mkdir(parents=True, exist_ok=True)
+            merge_file = merge_path.open("w", encoding="utf-8")
+
+        for record in records:
+            out_file = merge_file
+            close_after = False
+            if out_file is None and args.output:
+                out_path = _infer_rule_output_path(
+                    args.output,
+                    record.record_id,
+                    multi_record=multi_record,
+                )
+                out_file = out_path.open("w", encoding="utf-8")
+                close_after = True
+
+            try:
+                total_frames += _run_infer_collision_record(
+                    record,
+                    CollisionProcessor,
+                    infer_width=args.infer_width,
+                    infer_height=args.infer_height,
+                    fps=args.fps,
+                    max_frames=args.max_frames,
+                    realtime=args.realtime,
+                    video=args.video,
+                    alarm_min_consecutive_frames=args.alarm_min_consecutive_frames,
+                    alarm_cooldown_frames=args.alarm_cooldown_frames,
+                    pose_frame_interval=args.pose_frame_interval,
+                    out_file=out_file,
+                )
+            finally:
+                if close_after and out_file:
+                    out_file.close()
+    finally:
+        if merge_file:
+            merge_file.close()
+
+    logger.info("collision.py 逐帧推理完成: records={}, frames={}", len(records), total_frames)
+    return 0
+
+
 def _cmd_viz_frames(args: argparse.Namespace) -> int:
     from analysis.frame_viz import write_frame_viz_html
 
@@ -846,6 +1017,44 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_logging_args(p_infer_rule)
     p_infer_rule.set_defaults(func=_cmd_infer_rule)
+
+    p_infer_collision = sub.add_parser("infer-collision", help="调用 box_human_det/collision.py 模拟视频流逐帧推理")
+    p_infer_collision.add_argument(
+        "--record-dir",
+        required=True,
+        help="记录目录或包含多条记录的父目录（需含 skeleton.parquet 与 annotation.json）",
+    )
+    p_infer_collision.add_argument("--video", default="", help="原始视频路径，仅用于日志标识")
+    p_infer_collision.add_argument("--infer-width", type=float, default=None, help="推理坐标宽度")
+    p_infer_collision.add_argument("--infer-height", type=float, default=None, help="推理坐标高度")
+    p_infer_collision.add_argument("--fps", type=float, default=15.0, help="模拟流帧率")
+    p_infer_collision.add_argument("--max-frames", type=int, default=0, help="最多推理帧数，0 表示全部")
+    p_infer_collision.add_argument("--realtime", action="store_true", help="按 fps sleep，模拟真实时间流")
+    p_infer_collision.add_argument(
+        "--pose-frame-interval",
+        type=int,
+        default=1,
+        help="姿态估计帧间隔，每隔 N 帧处理一次（默认 1，即每帧都处理）",
+    )
+    p_infer_collision.add_argument(
+        "--alarm-min-consecutive-frames",
+        type=int,
+        default=3,
+        help="报警最小连续帧数（默认 3）",
+    )
+    p_infer_collision.add_argument(
+        "--alarm-cooldown-frames",
+        type=int,
+        default=0,
+        help="报警冷却帧数（默认 0）",
+    )
+    p_infer_collision.add_argument(
+        "--output",
+        default="",
+        help="JSONL 输出：单条记录为文件路径；多条记录时为目录（逐条生成 {record_id}.jsonl）或合并 .jsonl 文件",
+    )
+    _add_logging_args(p_infer_collision)
+    p_infer_collision.set_defaults(func=_cmd_infer_collision)
 
     p_viz = sub.add_parser("viz-frames", help="生成交互 HTML，叠加绘制骨架与货框标注")
     p_viz.add_argument("--record-dir", required=True, help="记录目录")
