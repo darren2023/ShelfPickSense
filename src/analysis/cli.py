@@ -309,39 +309,70 @@ def _run_infer_collision_record(
     if max_frames > 0:
         frames = frames[:max_frames]
     frame_interval = 1.0 / fps if realtime and fps > 0 else 0.0
+
+    # 构建帧索引到帧数据的映射
+    frames_by_idx = {f.frame_idx: f for f in frames}
+
+    # 确定帧索引范围
+    if frames:
+        min_frame = min(f.frame_idx for f in frames)
+        max_frame = max(f.frame_idx for f in frames)
+    else:
+        min_frame = 1
+        max_frame = 1
+
     processed_count = 0
     logger.info(
-        "开始 collision.py 逐帧推理: record={}, video={}, frames={}, pose_frame_interval={}, realtime={}, fps={}",
+        "开始 collision.py 逐帧推理: record={}, video={}, frame_range={}-{}, frames={}, pose_frame_interval={}, realtime={}, fps={}",
         record.record_id,
         video or "",
+        min_frame,
+        max_frame,
         len(frames),
         pose_frame_interval,
         realtime,
         fps,
     )
 
-    for idx, frame in enumerate(frames):
-        # 根据 pose_frame_interval 跳帧处理
-        if idx % pose_frame_interval != 0:
+    # 按帧索引顺序处理，填充缺失帧
+    for frame_idx in range(min_frame, max_frame + 1):
+        # 根据 pose_frame_interval 跳帧处理（基于帧索引而非数组索引）
+        if (frame_idx - 1) % pose_frame_interval != 0:
             continue
-        pose_frame = {
-            "frame_idx": frame.frame_idx,
-            "persons": frame.persons,
-        }
-        result = processor.process(pose_frame)
+
+        frame = frames_by_idx.get(frame_idx)
+
+        if frame is not None:
+            # 有骨架数据，正常处理
+            pose_frame = {
+                "frame_idx": frame.frame_idx,
+                "persons": frame.persons,
+            }
+            result = processor.process(pose_frame)
+
+            pred = {
+                "record_id": record.record_id,
+                "frame_idx": frame.frame_idx,
+                "is_picking": bool(result.get("alarm_collisions")),
+                "picking_prob": 1.0 if result.get("alarm_collisions") else 0.0,
+                "predicted_box_tokens": list(result.get("alarm_collisions") or result.get("collisions") or []),
+                "collision_collisions": list(result.get("collisions") or []),
+                "collision_alarm_collisions": list(result.get("alarm_collisions") or []),
+            }
+        else:
+            # 无骨架数据，输出空结果
+            pred = {
+                "record_id": record.record_id,
+                "frame_idx": frame_idx,
+                "is_picking": False,
+                "picking_prob": 0.0,
+                "predicted_box_tokens": [],
+                "collision_collisions": [],
+                "collision_alarm_collisions": [],
+            }
 
         processed_count += 1
 
-        # 构造与 infer-rule 兼容的输出格式
-        pred = {
-            "record_id": record.record_id,
-            "frame_idx": frame.frame_idx,
-            "is_picking": bool(result.get("alarm_collisions")),
-            "picking_prob": 1.0 if result.get("alarm_collisions") else 0.0,
-            "predicted_box_tokens": list(result.get("alarm_collisions") or result.get("collisions") or []),
-            "collision_collisions": list(result.get("collisions") or []),
-            "collision_alarm_collisions": list(result.get("alarm_collisions") or []),
-        }
         line = json.dumps(pred, ensure_ascii=False)
         if out_file:
             out_file.write(line + "\n")
