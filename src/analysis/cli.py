@@ -426,14 +426,22 @@ def _cmd_infer_collision(args: argparse.Namespace) -> int:
         for record in records:
             out_file = merge_file
             close_after = False
-            if out_file is None and args.output:
-                out_path = _infer_rule_output_path(
-                    args.output,
-                    record.record_id,
-                    multi_record=multi_record,
-                )
+            if out_file is None:
+                # 确定输出路径
+                if args.output:
+                    # 用户指定了输出路径
+                    out_path = _infer_rule_output_path(
+                        args.output,
+                        record.record_id,
+                        multi_record=multi_record,
+                    )
+                else:
+                    # 未指定输出时，自动在每个 record 目录中生成 collision_infer.jsonl
+                    out_path = record.record_dir / "collision_infer.jsonl"
+
                 out_file = out_path.open("w", encoding="utf-8")
                 close_after = True
+                logger.info("输出文件: {}", out_path)
 
             try:
                 total_frames += _run_infer_collision_record(
