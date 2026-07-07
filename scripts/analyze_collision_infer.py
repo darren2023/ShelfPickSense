@@ -8,6 +8,15 @@ from collections import defaultdict
 from datetime import datetime
 
 
+def find_records(data_dir: Path) -> List[Path]:
+    """查找所有 record 目录"""
+    records = []
+    for item in data_dir.iterdir():
+        if item.is_dir() and item.name.startswith('record_'):
+            records.append(item)
+    return sorted(records)
+
+
 def load_jsonl(path: Path) -> List[Dict]:
     """加载 JSONL 文件"""
     data = []
@@ -243,26 +252,149 @@ def print_report(analysis: Dict):
     print("\n" + "="*60)
 
 
+def analyze_record(record_dir: Path, infer_filename: str = "collision_infer.jsonl") -> Dict:
+    """分析单个 record 目录
+
+    Args:
+        record_dir: record 目录路径
+        infer_filename: 推理结果文件名
+
+    Returns:
+        分析结果字典
+    """
+    predictions_path = record_dir / infer_filename
+    ground_truth_path = record_dir / "event_review.json"
+
+    result = {
+        'record_id': record_dir.name,
+        'status': 'error',
+        'error': None,
+        'analysis': None,
+    }
+
+    # 检查文件是否存在
+    if not predictions_path.exists():
+        result['error'] = f'{infer_filename} 不存在'
+        return result
+
+    if not ground_truth_path.exists():
+        result['error'] = 'event_review.json 不存在'
+        return result
+
+    try:
+        # 加载数据
+        if predictions_path.suffix == '.jsonl':
+            predictions = load_jsonl(predictions_path)
+        else:
+            predictions_data = load_json(predictions_path)
+            # 如果是 JSON 文件，确保它是列表格式
+            predictions = predictions_data if isinstance(predictions_data, list) else [predictions_data]
+
+        ground_truth = load_ground_truth(ground_truth_path)
+
+        # 分析预测结果
+        analysis = analyze_predictions(predictions, ground_truth)
+        result['status'] = 'success'
+        result['analysis'] = analysis
+        result['summary'] = {
+            'predictions_frames': len(predictions),
+            'gt_frames': len(ground_truth),
+            'metrics': analysis['metrics']['frame_level'],
+        }
+
+    except Exception as e:
+        result['error'] = str(e)
+
+    return result
+
+
+def print_batch_summary(results: List[Dict], analyses: List[Dict]):
+    """打印批量分析汇总"""
+    total = len(results)
+    success = sum(1 for r in results if r['status'] == 'success')
+    errors = sum(1 for r in results if r['status'] == 'error')
+
+    print(f"\n{'='*60}")
+    print("批量分析汇总")
+    print(f"{'='*60}")
+    print(f"总计: {total}")
+    print(f"成功: {success}")
+    print(f"错误: {errors}")
+
+    if success > 0:
+        # 汇总统计
+        total_tp = 0
+        total_fp = 0
+        total_fn = 0
+        total_tn = 0
+        total_frames = 0
+
+        print(f"\n{'='*60}")
+        print("各 record 统计")
+        print(f"{'='*60}")
+        print(f"{'Record':<15} {'TP':<6} {'FP':<6} {'FN':<6} {'TN':<6} {'Precision':<10} {'Recall':<10} {'F1':<10}")
+        print(f"{'-'*70}")
+
+        for r, analysis in zip(results, analyses):
+            if r['status'] == 'success':
+                metrics = analysis['metrics']['frame_level']
+                record_id = r['record_id']
+                tp = metrics['true_positives']
+                fp = metrics['false_positives']
+                fn = metrics['false_negatives']
+                tn = metrics['true_negatives']
+                total_frames += metrics['total_frames']
+                total_tp += tp
+                total_fp += fp
+                total_fn += fn
+                total_tn += tn
+
+                print(f"{record_id:<15} {tp:<6} {fp:<6} {fn:<6} {tn:<6} "
+                      f"{metrics['precision']:<10.4f} {metrics['recall']:<10.4f} {metrics['f1_score']:<10.4f}")
+            else:
+                print(f"{r['record_id']:<15} 错误: {r['error']}")
+
+        # 计算总体指标
+        total_precision = total_tp / (total_tp + total_fp) if (total_tp + total_fp) > 0 else 0
+        total_recall = total_tp / (total_tp + total_fn) if (total_tp + total_fn) > 0 else 0
+        total_f1 = 2 * total_precision * total_recall / (total_precision + total_recall) if (total_precision + total_recall) > 0 else 0
+
+        print(f"{'-'*70}")
+        print(f"{'总计':<15} {total_tp:<6} {total_fp:<6} {total_fn:<6} {total_tn:<6} "
+              f"{total_precision:<10.4f} {total_recall:<10.4f} {total_f1:<10.4f}")
+        print(f"{'总帧数':<15} {total_frames}")
+
+
 def build_parser():
     """构建命令行参数解析器"""
     parser = argparse.ArgumentParser(
         description="分析 collision_infer 结果，计算指标并打标签"
     )
     parser.add_argument(
-        "predictions",
-        help="预测结果文件路径（JSONL 或 JSON）"
+        "data_dir",
+        nargs='?',
+        help="数据目录（包含 record_* 子目录）或单个预测文件路径"
     )
     parser.add_argument(
-        "ground_truth",
-        nargs='?',
+        "--infer-file",
+        default="collision_infer.jsonl",
+        help="推理结果文件名（默认 collision_infer.jsonl）"
+    )
+    parser.add_argument(
+        "--record",
         default=None,
-        help="Ground truth 文件路径（event_review.json，默认与预测文件同目录）"
+        help="指定单个 record ID（如 record_001），不指定则处理所有 record"
     )
     parser.add_argument(
         "--output-dir",
         "-o",
         default=None,
         help="输出目录（默认与预测文件同目录的 analysis_results 子目录）"
+    )
+    parser.add_argument(
+        "--no-report",
+        action="store_true",
+        help="不生成报告文件"
     )
     return parser
 
@@ -271,56 +403,126 @@ if __name__ == "__main__":
     parser = build_parser()
     args = parser.parse_args()
 
-    predictions_path = Path(args.predictions)
+    data_dir = Path(args.data_dir) if args.data_dir else None
 
-    # 如果没有指定 ground_truth，使用同一目录下的 event_review.json
-    if args.ground_truth:
-        ground_truth_path = Path(args.ground_truth)
+    # 判断是目录还是文件
+    is_batch = data_dir and data_dir.is_dir()
+
+    if is_batch:
+        # 批量处理模式
+        print(f"批量分析模式: {data_dir}")
+
+        # 获取要处理的 record 列表
+        if args.record:
+            record_dirs = [data_dir / args.record]
+        else:
+            record_dirs = find_records(data_dir)
+
+        if not record_dirs:
+            print("错误: 未找到 record 目录")
+            exit(1)
+
+        print(f"找到 {len(record_dirs)} 个 record 目录")
+        print('='*60)
+
+        results = []
+        analyses = []
+        for record_dir in record_dirs:
+            print(f"处理: {record_dir.name}")
+            result = analyze_record(record_dir, args.infer_file)
+            results.append(result)
+
+            if result['status'] == 'success':
+                analysis = result['analysis']
+                analyses.append(analysis)
+                summary = result['summary']
+                metrics = summary['metrics']
+                print(f"  TP={metrics['true_positives']}, FP={metrics['false_positives']}, "
+                      f"FN={metrics['false_negatives']}, TN={metrics['true_negatives']}")
+                print(f"  Precision={metrics['precision']:.4f}, Recall={metrics['recall']:.4f}, "
+                      f"F1={metrics['f1_score']:.4f}")
+
+                # 保存报告到 record 目录
+                if not args.no_report:
+                    # 保存带标签的结果
+                    labeled_path = record_dir / "labeled_results.jsonl"
+                    save_labeled_results(analysis["frame_analysis"], labeled_path)
+                    print(f"  带标签结果已保存: {labeled_path}")
+
+                    # 保存指标报告
+                    report_path = record_dir / "analysis_report.json"
+                    report_data = {
+                        'record_id': result['record_id'],
+                        'generated_at': datetime.now().isoformat(),
+                        'infer_file': args.infer_file,
+                        'summary': summary,
+                        'metrics': metrics,
+                        'frame_analysis': analysis.get('frame_analysis', [])[:100],  # 限制详情数量
+                    }
+                    with open(report_path, 'w', encoding='utf-8') as f:
+                        json.dump(report_data, f, ensure_ascii=False, indent=2)
+                    print(f"  报告已保存: {report_path}")
+            else:
+                print(f"  错误: {result['error']}")
+
+        # 打印汇总
+        print_batch_summary(results, analyses)
+
     else:
+        # 单文件模式（向后兼容）
+        if not data_dir:
+            print("错误: 必须指定数据目录或预测文件")
+            exit(1)
+
+        predictions_path = data_dir
         ground_truth_path = predictions_path.parent / "event_review.json"
 
-    if not predictions_path.exists():
-        print(f"错误: 预测文件不存在: {predictions_path}")
-        exit(1)
+        if args.ground_truth:
+            ground_truth_path = Path(args.ground_truth)
 
-    if not ground_truth_path.exists():
-        print(f"错误: Ground truth 文件不存在: {ground_truth_path}")
-        print(f"提示: 请确保 {ground_truth_path.name} 与预测文件在同一目录")
-        exit(1)
+        if not predictions_path.exists():
+            print(f"错误: 预测文件不存在: {predictions_path}")
+            exit(1)
 
-    # 确定输出目录
-    if args.output_dir:
-        output_dir = Path(args.output_dir)
-    else:
-        output_dir = predictions_path.parent / "analysis_results"
+        if not ground_truth_path.exists():
+            print(f"错误: Ground truth 文件不存在: {ground_truth_path}")
+            exit(1)
 
-    output_dir.mkdir(parents=True, exist_ok=True)
+        # 确定输出目录
+        if args.output_dir:
+            output_dir = Path(args.output_dir)
+        else:
+            output_dir = predictions_path.parent / "analysis_results"
 
-    # 加载数据
-    print(f"加载预测结果: {predictions_path}")
-    if predictions_path.suffix == '.jsonl':
-        predictions = load_jsonl(predictions_path)
-    else:
-        predictions = load_json(predictions_path)
+        output_dir.mkdir(parents=True, exist_ok=True)
 
-    print(f"加载 Ground Truth: {ground_truth_path}")
-    ground_truth = load_ground_truth(ground_truth_path)
+        # 加载数据
+        print(f"加载预测结果: {predictions_path}")
+        if predictions_path.suffix == '.jsonl':
+            predictions = load_jsonl(predictions_path)
+        else:
+            predictions_data = load_json(predictions_path)
+            predictions = predictions_data if isinstance(predictions_data, list) else [predictions_data]
 
-    print(f"预测帧数: {len(predictions)}")
-    print(f"GT 正样本帧数: {len(ground_truth)}")
+        print(f"加载 Ground Truth: {ground_truth_path}")
+        ground_truth = load_ground_truth(ground_truth_path)
 
-    # 分析预测结果
-    analysis = analyze_predictions(predictions, ground_truth)
+        print(f"预测帧数: {len(predictions)}")
+        print(f"GT 正样本帧数: {len(ground_truth)}")
 
-    # 打印报告
-    print_report(analysis)
+        # 分析预测结果
+        analysis = analyze_predictions(predictions, ground_truth)
 
-    # 保存带标签的结果
-    labeled_path = output_dir / "labeled_results.jsonl"
-    save_labeled_results(analysis["frame_analysis"], labeled_path)
-    print(f"\n带标签结果已保存: {labeled_path}")
+        # 打印报告
+        print_report(analysis)
 
-    # 保存指标报告
-    report_path = output_dir / "metrics_report.json"
-    save_metrics_report(analysis, report_path, predictions_path, ground_truth_path)
-    print(f"指标报告已保存: {report_path}")
+        # 保存带标签的结果
+        if not args.no_report:
+            labeled_path = output_dir / "labeled_results.jsonl"
+            save_labeled_results(analysis["frame_analysis"], labeled_path)
+            print(f"\n带标签结果已保存: {labeled_path}")
+
+            # 保存指标报告
+            report_path = output_dir / "metrics_report.json"
+            save_metrics_report(analysis, report_path, predictions_path, ground_truth_path)
+            print(f"指标报告已保存: {report_path}")
