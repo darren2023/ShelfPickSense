@@ -3,13 +3,11 @@
 from __future__ import annotations
 
 import json
-import math
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
-from loguru import logger
 
 from analysis.annotation import BoxInfo, annotation_size, build_box_index, load_annotation
 from analysis.box_layout import BoxNumericCode, ShelfLayoutStats, build_box_layout, compute_shelf_layout_stats
@@ -27,11 +25,6 @@ from analysis.labels import (
     enrich_labels_with_box_layout,
     load_event_review,
 )
-
-# skeleton 坐标超出声明 infer 的可接受比例（与 visual-dps 1.05 margin 对齐）
-_SKELETON_INFER_TOLERANCE = 0.05
-# 声明 infer 明显小于 skeleton 范围时视为错误（如 640×360 vs 852×480）
-_SKELETON_INFER_TOO_SMALL_RATIO = 0.85
 
 
 @dataclass
@@ -115,7 +108,6 @@ def _positive_float(value: Any) -> float | None:
 
 
 def _infer_from_manifest(record_dir: Path) -> tuple[float, float] | None:
-    """仅从 manifest 根级 infer_width/infer_height 读取，不使用 annotation_size 回退。"""
     path = record_dir / MANIFEST_FILE
     if not path.is_file():
         return None
@@ -130,17 +122,13 @@ def _infer_from_manifest(record_dir: Path) -> tuple[float, float] | None:
     infer_h = _positive_float(data.get("infer_height"))
     if infer_w and infer_h:
         return infer_w, infer_h
-    return None
 
-
-def _infer_from_skeleton_columns(skeleton: pd.DataFrame) -> tuple[float, float] | None:
-    """从 parquet 列 infer_width/infer_height 读取（取首个有效值）。"""
-    for col_w, col_h in (("infer_width", "infer_height"),):
-        if col_w not in skeleton.columns or col_h not in skeleton.columns:
-            continue
-        for _, row in skeleton.iterrows():
-            infer_w = _positive_float(row.get(col_w))
-            infer_h = _positive_float(row.get(col_h))
+    annotation = data.get("annotation")
+    if isinstance(annotation, dict):
+        ann_size = annotation.get("annotation_size")
+        if isinstance(ann_size, dict):
+            infer_w = _positive_float(ann_size.get("width"))
+            infer_h = _positive_float(ann_size.get("height"))
             if infer_w and infer_h:
                 return infer_w, infer_h
     return None
@@ -168,132 +156,21 @@ def _infer_from_pose_pipeline(annotation: dict[str, Any]) -> tuple[float, float]
     return DEFAULT_POSE_INFER_WIDTH, DEFAULT_POSE_INFER_HEIGHT
 
 
-def _skeleton_coordinate_extent(skeleton: pd.DataFrame) -> tuple[float, float]:
-    """从 skeleton bbox/kpt 分位数估计坐标范围（infer 空间实际占用）。"""
-    if skeleton.empty:
-        return 0.0, 0.0
-
-    xs: list[float] = []
-    ys: list[float] = []
-
-    for col in ("bbox_x2",):
-        if col in skeleton.columns:
-            vals = pd.to_numeric(skeleton[col], errors="coerce").dropna()
-            xs.extend(float(v) for v in vals if v > 0)
-
-    for col in ("bbox_y2",):
-        if col in skeleton.columns:
-            vals = pd.to_numeric(skeleton[col], errors="coerce").dropna()
-            ys.extend(float(v) for v in vals if v > 0)
-
-    for i in range(17):
-        col_x = f"kpt_{i}_x"
-        col_y = f"kpt_{i}_y"
-        if col_x in skeleton.columns:
-            vals = pd.to_numeric(skeleton[col_x], errors="coerce").dropna()
-            xs.extend(float(v) for v in vals if v > 0)
-        if col_y in skeleton.columns:
-            vals = pd.to_numeric(skeleton[col_y], errors="coerce").dropna()
-            ys.extend(float(v) for v in vals if v > 0)
-
-    if not xs or not ys:
-        return 0.0, 0.0
-
-    return float(pd.Series(xs).quantile(0.99)), float(pd.Series(ys).quantile(0.99))
-
-
-def _snap_infer_size_from_extent(ext_w: float, ext_h: float, annotation: dict[str, Any]) -> tuple[float, float]:
-    """将 skeleton 范围对齐到常见 infer 尺寸。"""
-    pipeline_w, pipeline_h = _infer_from_pose_pipeline(annotation)
-    if ext_w <= pipeline_w * (1.0 + _SKELETON_INFER_TOLERANCE) and ext_h <= pipeline_h * (1.0 + _SKELETON_INFER_TOLERANCE):
-        return pipeline_w, pipeline_h
-    return math.ceil(ext_w), math.ceil(ext_h)
-
-
-def _align_infer_with_skeleton(
-    infer_w: float,
-    infer_h: float,
-    skeleton: pd.DataFrame,
-    annotation: dict[str, Any],
-    *,
-    source: str,
-    record_id: str,
-) -> tuple[float, float]:
-    """
-    校验并修正 infer 尺寸，确保 skeleton 坐标落在 infer 空间内。
-
-    若元数据 infer 明显小于 skeleton 实际范围（如 manifest 误用 annotation_size），
-    则回退到 pose 管线默认或 skeleton 分位数推断。
-    """
-    sk_w, sk_h = _skeleton_coordinate_extent(skeleton)
-    if sk_w <= 0 or sk_h <= 0:
-        return infer_w, infer_h
-
-    overflow_w = sk_w > infer_w * (1.0 + _SKELETON_INFER_TOLERANCE)
-    overflow_h = sk_h > infer_h * (1.0 + _SKELETON_INFER_TOLERANCE)
-    too_small = infer_w < sk_w * _SKELETON_INFER_TOO_SMALL_RATIO or infer_h < sk_h * _SKELETON_INFER_TOO_SMALL_RATIO
-
-    if overflow_w or overflow_h or too_small:
-        corrected = _snap_infer_size_from_extent(sk_w, sk_h, annotation)
-        logger.warning(
-            "记录 {} infer 尺寸 ({:.0f}x{:.0f}, 来源={}) 与 skeleton 范围 ({:.0f}x{:.0f}) 不一致，"
-            "已修正为 {:.0f}x{:.0f} 以保证货框与骨架对齐",
-            record_id,
-            infer_w,
-            infer_h,
-            source,
-            sk_w,
-            sk_h,
-            corrected[0],
-            corrected[1],
-        )
-        return corrected
-
-    return infer_w, infer_h
-
-
 def resolve_infer_frame_size(
     record_dir: Path,
     skeleton: pd.DataFrame,
     annotation: dict[str, Any],
-    *,
-    record_id: str = "",
 ) -> tuple[float, float]:
-    """解析 infer 坐标系尺寸（与 skeleton 关键点、货框 polygon 同一空间）。"""
-    rid = record_id or record_dir.name
-    source = "pose_pipeline"
-    infer_w: float | None = None
-    infer_h: float | None = None
-
+    """解析推理坐标系尺寸（与 skeleton 关键点同一空间）。"""
     from_manifest = _infer_from_manifest(record_dir)
     if from_manifest:
-        infer_w, infer_h = from_manifest
-        source = "manifest"
+        return from_manifest
 
-    if infer_w is None:
-        from_columns = _infer_from_skeleton_columns(skeleton)
-        if from_columns:
-            infer_w, infer_h = from_columns
-            source = "skeleton_columns"
+    from_annotation = _infer_from_annotation_meta(annotation)
+    if from_annotation:
+        return from_annotation
 
-    if infer_w is None:
-        from_annotation = _infer_from_annotation_meta(annotation)
-        if from_annotation:
-            infer_w, infer_h = from_annotation
-            source = "annotation_meta"
-
-    if infer_w is None:
-        infer_w, infer_h = _infer_from_pose_pipeline(annotation)
-
-    infer_w, infer_h = _align_infer_with_skeleton(
-        infer_w,
-        infer_h,
-        skeleton,
-        annotation,
-        source=source,
-        record_id=rid,
-    )
-    return infer_w, infer_h
+    return _infer_from_pose_pipeline(annotation)
 
 
 def _infer_frame_size(skeleton: pd.DataFrame) -> tuple[float, float]:
@@ -336,12 +213,11 @@ def load_record(record_dir: Path) -> RecordData:
     event_review_path = record_dir / EVENT_REVIEW_FILE
     event_review = load_event_review(event_review_path) if event_review_path.is_file() else None
 
-    infer_w, infer_h = resolve_infer_frame_size(
-        record_dir,
-        skeleton,
-        annotation,
-        record_id=record_dir.name,
-    )
+    infer_w, infer_h = resolve_infer_frame_size(record_dir, skeleton, annotation)
+    ann_size = annotation.get("annotation_size") if isinstance(annotation.get("annotation_size"), dict) else {}
+    if ann_size.get("width") and ann_size.get("height"):
+        # 标注尺寸用于货框多边形缩放
+        pass
 
     box_index = build_box_index(annotation, infer_w=infer_w, infer_h=infer_h)
     box_tokens = sorted(box_index.keys())
