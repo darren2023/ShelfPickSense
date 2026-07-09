@@ -161,18 +161,50 @@ def find_tracked_person(frame: FramePersons, track_id: int | None, *, fallback_a
     return None
 
 
+def _reference_person_on_frame(ctx: FeatureContext, track_id: int | None) -> dict[str, Any] | None:
+    """当前帧上用于跨帧关联的参考 person（track 优先，无 track 时取排序第一人）。"""
+    person = find_person_by_track(ctx.frame, track_id)
+    if person is not None:
+        return person
+    if track_id is not None:
+        return None
+    persons = sorted_persons(ctx.frame)
+    return persons[0] if persons else None
+
+
+def find_tracked_person_at_frame(
+    ctx: FeatureContext,
+    track_id: int | None,
+    frame: FramePersons,
+) -> dict[str, Any] | None:
+    """在指定帧上找到与当前帧参考 person（track 或肩点锚点）对应的 person。"""
+    ref_person = _reference_person_on_frame(ctx, track_id)
+    anchor = person_anchor(ref_person) if ref_person is not None else None
+    return find_tracked_person(frame, track_id, fallback_anchor=anchor)
+
+
 def tracked_person_at_offset(ctx: FeatureContext, track_id: int | None, offset: int) -> dict[str, Any] | None:
+    """在当前帧向前 offset 处找到与 track_id/肩点锚点对应的 person。"""
     frame = ctx.prior_frame(offset)
     if frame is None:
         return None
-    anchor = None
-    if offset == 0:
+
+    ref_person = _reference_person_on_frame(ctx, track_id)
+    anchor = person_anchor(ref_person) if ref_person is not None else None
+
+    if track_id is not None:
         person = find_person_by_track(frame, track_id)
-        return person
-    cur_person = find_person_by_track(ctx.frame, track_id)
-    if cur_person is not None:
-        anchor = person_anchor(cur_person)
-    return find_tracked_person(frame, track_id, fallback_anchor=anchor)
+        if person is not None:
+            return person
+
+    if anchor is not None:
+        matched = match_person_by_anchor(frame, anchor)
+        if matched is not None:
+            return matched
+
+    if offset == 0 and ref_person is not None and frame is ctx.frame:
+        return ref_person
+    return None
 
 
 def _wrist_confidence(person: dict[str, Any]) -> float:
@@ -210,7 +242,7 @@ def side_movement_components(
     """同一 track 指定侧别相对前 offset 帧的 (dx, dy, dist)，均除以画面尺度。"""
     if offset <= 0:
         return 0.0, 0.0, 0.0
-    cur_person = find_person_by_track(ctx.frame, track_id)
+    cur_person = tracked_person_at_offset(ctx, track_id, 0)
     if cur_person is None:
         return 0.0, 0.0, 0.0
     cur = get_side_point(cur_person, side)
@@ -240,7 +272,7 @@ def foot_avg_movement_components(
     """双脚平均点相对前 offset 帧的 (dx, dy, dist)。"""
     if offset <= 0:
         return 0.0, 0.0, 0.0
-    cur_person = find_person_by_track(ctx.frame, track_id)
+    cur_person = tracked_person_at_offset(ctx, track_id, 0)
     cur = foot_avg_point(cur_person)
     if cur is None:
         return 0.0, 0.0, 0.0
@@ -267,7 +299,7 @@ def foot_position_features(
     key_prefix = f"{prefix}_" if prefix else ""
     out: dict[str, float] = {}
     scale = _movement_scale(ctx)
-    person = find_person_by_track(ctx.frame, track_id)
+    person = tracked_person_at_offset(ctx, track_id, 0)
 
     for label, point_fn in (
         ("left_foot", lambda p: get_side_point(p, LEFT_FOOT) if p else None),
@@ -311,7 +343,7 @@ def side_movement_norm(
     """同一 track 的手腕/脚在跨 offset 帧后的位移（归一化）。"""
     if offset <= 0:
         return 0.0
-    cur_person = find_person_by_track(ctx.frame, track_id)
+    cur_person = tracked_person_at_offset(ctx, track_id, 0)
     if cur_person is None:
         return 0.0
     cur = get_side_point(cur_person, side)

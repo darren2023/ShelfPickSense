@@ -18,6 +18,7 @@ from analysis.features.spatial import point_in_polygon, point_to_polygon_dist, p
 from analysis.features.tracking import (
     MAX_PERSON_SLOTS,
     find_person_by_track,
+    find_tracked_person_at_frame,
     get_keypoint,
     person_track_id,
     select_primary_track_id,
@@ -164,7 +165,7 @@ def window_hit_count_for_track(
         hist_ctx = _frame_context(ctx, offset)
         if hist_ctx is None:
             break
-        person = find_person_by_track(hist_ctx.frame, track_id)
+        person = find_tracked_person_at_frame(ctx, track_id, hist_ctx.frame)
         if person is None:
             continue
         tokens = rule_collision_tokens_for_person(person, hist_ctx, params)
@@ -192,7 +193,7 @@ def window_hit_counts_by_box(
         hist_ctx = _frame_context(ctx, offset)
         if hist_ctx is None:
             break
-        person = find_person_by_track(hist_ctx.frame, track_id)
+        person = find_tracked_person_at_frame(ctx, track_id, hist_ctx.frame)
         if person is None:
             continue
         for token in rule_collision_tokens_for_person(person, hist_ctx, params):
@@ -221,7 +222,7 @@ def _box_hand_collision_flags(
     wrist_hit = 0.0
     forearm_hit = 0.0
     best_signed = -1.0
-    for px, py, kind in collect_rule_hand_points(person, params):
+    for px, py, kind in hand_points:
         signed = signed_polygon_distance(px, py, box.polygon)
         best_signed = max(best_signed, signed)
         if signed >= -margin:

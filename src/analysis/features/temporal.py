@@ -11,12 +11,12 @@ from analysis.features.tracking import (
     MAX_PERSON_SLOTS,
     RIGHT_WRIST,
     empty_person_slot_features,
-    find_person_by_track,
     foot_position_features,
     person_track_id,
     select_primary_track_id,
     side_movement_norm,
     sorted_persons,
+    tracked_person_at_offset,
 )
 
 
@@ -24,10 +24,9 @@ def consecutive_hit_streak_for_track(ctx: FeatureContext, track_id: int | None, 
     """统计同一 track 在当前帧向前连续命中（手腕进入任一货框）的帧数。"""
     streak = 0
     for offset in range(max_lookback):
-        frame = ctx.prior_frame(offset)
-        if frame is None:
+        if ctx.prior_frame(offset) is None:
             break
-        person = find_person_by_track(frame, track_id)
+        person = tracked_person_at_offset(ctx, track_id, offset)
         if person is None:
             break
         if not _person_hits_any_box(person, ctx):

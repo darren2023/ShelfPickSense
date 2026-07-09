@@ -196,3 +196,63 @@ def test_rule_engine_collision_and_window_features(fixture_data_dir: Path):
     feat8 = reg.extract_frame_features(record, frame8)
     assert feat8.features["rule.window_hit_3_6"] == pytest.approx(1.0)
     assert feat8.features["rule.window_hits_6"] >= 3.0
+
+
+def test_box_hand_collision_flags_respects_hand_points(fixture_data_dir: Path):
+    from analysis.features.base import FeatureContext
+    from analysis.features.rule_engine import RuleEngineParams, _box_hand_collision_flags
+    from analysis.records import load_record
+
+    record = load_record(fixture_data_dir)
+    frame = next(f for f in record.frames() if f.frame_idx == 6)
+    person = frame.persons[0]
+    ctx = FeatureContext.from_record(record, frame)
+    params = RuleEngineParams()
+
+    wrist_hit, forearm_hit, hand_hit, _signed = _box_hand_collision_flags(
+        person,
+        "S1:A1",
+        ctx,
+        params,
+        hand_points=[],
+        margin=10.0,
+    )
+    assert wrist_hit == pytest.approx(0.0)
+    assert forearm_hit == pytest.approx(0.0)
+    assert hand_hit == pytest.approx(0.0)
+
+
+def test_cross_frame_features_without_track_id(tmp_path: Path):
+    import shutil
+
+    import pandas as pd
+
+    from analysis.features.base import FeatureContext
+    from analysis.features.registry import default_registry
+    from analysis.features.rule_engine import RuleEngineParams, window_hit_count_for_track
+    from analysis.features.temporal import consecutive_hit_streak_for_track
+    from analysis.features.tracking import LEFT_WRIST, side_movement_norm
+    from analysis.records import load_record
+
+    fixture_dir = make_fixture_record(tmp_path / "record_no_track")
+    skeleton = pd.read_parquet(fixture_dir / "skeleton.parquet")
+    skeleton = skeleton.drop(columns=["person_track_id"], errors="ignore")
+    skeleton.to_parquet(fixture_dir / "skeleton.parquet", index=False)
+
+    record = load_record(fixture_dir)
+    frames = record.frame_index()
+    ctx8 = FeatureContext.from_record(record, frames[8], frame_index=frames)
+
+    streak = consecutive_hit_streak_for_track(ctx8, None)
+    assert streak >= 3
+
+    hits = window_hit_count_for_track(ctx8, None, RuleEngineParams(), window=6)
+    assert hits >= 3
+
+    move = side_movement_norm(ctx8, track_id=None, side=LEFT_WRIST, offset=1)
+    assert move == pytest.approx(0.0)
+
+    reg = default_registry()
+    feat8 = reg.extract_frame_features(record, frames[8])
+    assert feat8.features["temporal.consecutive_hit_3"] == pytest.approx(1.0)
+    assert feat8.features["rule.window_hit_3_6"] == pytest.approx(1.0)
