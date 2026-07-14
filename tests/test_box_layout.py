@@ -10,8 +10,10 @@ import pytest
 from analysis.box_layout import (
     BoxNumericCode,
     build_box_layout,
+    compute_shelf_bottom_bounds,
     infer_shelf_side_from_x_coords,
     list_box_layout_rows,
+    render_box_layout_svg,
     resolve_layout_token,
     token_to_numeric_code,
     tokens_to_numeric_codes,
@@ -36,7 +38,7 @@ def _box(
         "shelf_code": shelf_code,
         "layer": layer,
         "column": column,
-        "video_polygon": [[x1, y1], [x2, y1], [x2, y2], [x1, y2]],
+        "video_polygon": [[x1, y1], [x1, y2], [x2, y2], [x2, y1]],
     }
 
 
@@ -219,10 +221,75 @@ def test_list_box_layout_rows_includes_centroid():
     assert bottom_left.shelf_side == 1
     assert bottom_left.layer == 1
     assert bottom_left.column == 1
-    assert bottom_left.box_code == 111
     assert bottom_left.centroid_x > 0
     assert bottom_left.centroid_y > 0
     assert bottom_left.to_dict()["token"] == "82:2013"
+    assert "box_code" not in bottom_left.to_dict()
+    assert bottom_left.to_dict()["polygon"]
+
+
+def test_compute_shelf_bottom_bounds_by_side():
+    ann = _two_shelf_annotation()
+    bounds = compute_shelf_bottom_bounds(ann)
+
+    left = bounds["82"]
+    right = bounds["81"]
+
+    assert (left.p1_x, left.p1_y) == pytest.approx((218.0, 288.0))
+    assert (left.p2_x, left.p2_y) == pytest.approx((142.0, 288.0))
+    assert (right.p1_x, right.p1_y) == pytest.approx((442.0, 288.0))
+    assert (right.p2_x, right.p2_y) == pytest.approx((442.0, 288.0))
+
+
+def test_render_box_layout_svg_contains_layout_info(tmp_path: Path):
+    ann = _two_shelf_annotation()
+    out = tmp_path / "layout.svg"
+
+    render_box_layout_svg(ann, output_path=out)
+
+    svg = out.read_text(encoding="utf-8")
+    assert "<svg" in svg
+    assert ">(1,1)</text>" in svg
+    assert "82 bottom" in svg
+    assert "81 bottom" in svg
+    assert ">P1</text>" in svg
+    assert ">P2</text>" in svg
+    assert "P1=(218.0,288.0) P2=(142.0,288.0)" in svg
+
+
+def test_cli_box_layout_defaults_outputs_to_record_dir(tmp_path: Path):
+    from analysis.cli import main
+    from fixtures import make_fixture_record
+
+    record_dir = make_fixture_record(tmp_path / "record_001")
+
+    ret = main(["box-layout", "--record-dir", str(record_dir)])
+
+    assert ret == 0
+    json_path = record_dir / "box_layout.json"
+    svg_path = record_dir / "box_layout.svg"
+    assert json_path.is_file()
+    assert svg_path.is_file()
+    payload = json.loads(json_path.read_text(encoding="utf-8"))
+    assert payload["box_count"] == 2
+    assert "shelf_bottom_bounds" in payload
+    assert "<svg" in svg_path.read_text(encoding="utf-8")
+
+
+def test_cli_box_layout_processes_all_records_under_parent(tmp_path: Path):
+    from analysis.cli import main
+    from fixtures import make_fixture_record
+
+    parent = tmp_path / "records"
+    record_1 = make_fixture_record(parent / "record_001")
+    record_2 = make_fixture_record(parent / "record_002")
+
+    ret = main(["box-layout", "--record-dir", str(parent)])
+
+    assert ret == 0
+    for record_dir in (record_1, record_2):
+        assert (record_dir / "box_layout.json").is_file()
+        assert (record_dir / "box_layout.svg").is_file()
 
 
 def test_resolve_box_tokens_by_layout():

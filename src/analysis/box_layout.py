@@ -6,6 +6,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from xml.sax.saxutils import escape
 
 from analysis.annotation import box_collision_token, flatten_annotation_boxes
 
@@ -31,7 +32,7 @@ class BoxNumericCode:
 
 @dataclass(frozen=True)
 class BoxLayoutRow:
-    """货框布局一行记录，含数值编码与标注坐标系下的中心点。"""
+    """货框布局一行记录，含计算层列与标注坐标系下的中心点。"""
 
     token: str
     shelf_code: str
@@ -39,11 +40,11 @@ class BoxLayoutRow:
     shelf_side: int
     layer: int
     column: int
-    box_code: int
     centroid_x: float
     centroid_y: float
     annotation_layer: int | None = None
     annotation_column: int | None = None
+    polygon: tuple[tuple[float, float], ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -53,11 +54,27 @@ class BoxLayoutRow:
             "shelf_side": self.shelf_side,
             "layer": self.layer,
             "column": self.column,
-            "box_code": self.box_code,
             "centroid_x": round(self.centroid_x, 2),
             "centroid_y": round(self.centroid_y, 2),
             "annotation_layer": self.annotation_layer,
             "annotation_column": self.annotation_column,
+            "polygon": [[round(x, 2), round(y, 2)] for x, y in self.polygon],
+        }
+
+
+@dataclass(frozen=True)
+class ShelfBottomBounds:
+    """当前货架贴地边界的两个端点。"""
+
+    p1_x: float
+    p1_y: float
+    p2_x: float
+    p2_y: float
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "p1": [round(self.p1_x, 2), round(self.p1_y, 2)],
+            "p2": [round(self.p2_x, 2), round(self.p2_y, 2)],
         }
 
 
@@ -155,21 +172,32 @@ class _BoxGeom:
     cy: float
     raw_layer: int | None
     raw_column: int | None
+    polygon: tuple[tuple[float, float], ...] = ()
     shelf_side: int = 0
     layer: int = 0
     column: int = 0
 
 
-def _polygon_centroid(box: dict[str, Any]) -> tuple[float, float]:
+def _polygon_points_for_layout(box: dict[str, Any]) -> tuple[tuple[float, float], ...]:
     pts = box.get("video_polygon") or box.get("video_polygon_norm")
     if not isinstance(pts, list) or len(pts) < 3:
+        return ()
+    parsed: list[tuple[float, float]] = []
+    for pt in pts:
+        if isinstance(pt, (list, tuple)) and len(pt) >= 2:
+            parsed.append((float(pt[0]), float(pt[1])))
+    return tuple(parsed)
+
+
+def _polygon_centroid(box: dict[str, Any]) -> tuple[float, float]:
+    pts = _polygon_points_for_layout(box)
+    if not pts:
         return 0.0, 0.0
     xs: list[float] = []
     ys: list[float] = []
-    for pt in pts:
-        if isinstance(pt, (list, tuple)) and len(pt) >= 2:
-            xs.append(float(pt[0]))
-            ys.append(float(pt[1]))
+    for x, y in pts:
+        xs.append(x)
+        ys.append(y)
     if not xs:
         return 0.0, 0.0
     return sum(xs) / len(xs), sum(ys) / len(ys)
@@ -282,6 +310,7 @@ def _build_layout_geoms(
             cy=cy,
             raw_layer=_parse_int(raw.get("layer")),
             raw_column=_parse_int(raw.get("column")),
+            polygon=_polygon_points_for_layout(raw),
         )
         shelf_groups.setdefault(shelf_code or "_default", []).append(geom)
 
@@ -293,6 +322,48 @@ def _build_layout_geoms(
         _assign_columns(boxes)
         geoms.extend(boxes)
     return float(frame_width), geoms
+
+
+def compute_shelf_bottom_bounds_from_rows(rows: list[BoxLayoutRow]) -> dict[str, ShelfBottomBounds]:
+    """按货架计算贴地边界端点。
+
+    P1/coord1：右货架取 x 坐标最小的点，左货架取 x 坐标最大的点。Y坐标较大的点。
+    P2/coord2：该货架所有货框顶点中 y 坐标最靠下的点。
+    """
+    by_shelf: dict[str, list[BoxLayoutRow]] = defaultdict(list)
+    for row in rows:
+        by_shelf[row.shelf_code or "_default"].append(row)
+
+    result: dict[str, ShelfBottomBounds] = {}
+    for shelf_code, shelf_rows in by_shelf.items():
+        bottom_layer = min((row.layer for row in shelf_rows if row.layer > 0), default=0)
+        points = [pt for row in shelf_rows for pt in row.polygon]
+        if not points:
+            points = [(row.centroid_x, row.centroid_y) for row in shelf_rows]
+        if not points:
+            continue
+        side = next((row.shelf_side for row in shelf_rows), 0)
+        coord1 = max(points, key=lambda pt: (pt[1], -pt[0]))
+        if side == 2:
+            coord2 = min(points, key=lambda pt: (pt[0], -pt[1]))
+        else:
+            coord2 = max(points, key=lambda pt: (pt[0], pt[1]))
+        result[shelf_code] = ShelfBottomBounds(
+            p1_x=coord2[0],
+            p1_y=coord2[1],
+            p2_x=coord1[0],
+            p2_y=coord1[1],
+        )
+    return result
+
+
+def compute_shelf_bottom_bounds(
+    annotation: dict[str, Any],
+    *,
+    frame_width: float | None = None,
+) -> dict[str, ShelfBottomBounds]:
+    """从 annotation 计算各货架底层货框坐标范围。"""
+    return compute_shelf_bottom_bounds_from_rows(list_box_layout_rows(annotation, frame_width=frame_width))
 
 
 def build_box_layout(
@@ -335,21 +406,85 @@ def list_box_layout_rows(
             shelf_side=box.shelf_side,
             layer=box.layer,
             column=box.column,
-            box_code=BoxNumericCode(
-                shelf_side=box.shelf_side,
-                layer=box.layer,
-                column=box.column,
-            ).encode(),
             centroid_x=box.cx,
             centroid_y=box.cy,
             annotation_layer=box.raw_layer,
             annotation_column=box.raw_column,
+            polygon=box.polygon,
         )
         for box in geoms
     ]
     if sort:
         rows.sort(key=lambda row: (row.shelf_side, row.layer, row.column, row.shelf_code, row.box_id))
     return rows
+
+
+def render_box_layout_svg(
+    annotation: dict[str, Any],
+    *,
+    output_path: Path,
+    frame_width: float | None = None,
+) -> None:
+    """将 box_layout 计算结果渲染为 SVG，便于检查层列、编码和底层范围。"""
+    ann_size = annotation.get("annotation_size") if isinstance(annotation.get("annotation_size"), dict) else {}
+    width = float(frame_width or ann_size.get("width") or 640.0)
+    height = float(ann_size.get("height") or 360.0)
+    rows = list_box_layout_rows(annotation, frame_width=frame_width)
+    bounds = compute_shelf_bottom_bounds_from_rows(rows)
+    canvas_w = max(width, 1.0)
+    canvas_h = max(height, 1.0)
+    colors = {1: "#2563eb", 2: "#dc2626"}
+
+    parts = [
+        '<svg xmlns="http://www.w3.org/2000/svg" '
+        f'viewBox="0 0 {canvas_w:.2f} {canvas_h:.2f}" width="{canvas_w:.0f}" height="{canvas_h:.0f}">',
+        "<style>",
+        "text{font-family:Arial,sans-serif;font-size:8px;dominant-baseline:middle}",
+        ".small{font-size:6px}",
+        ".range{fill:none;stroke:#16a34a;stroke-width:2;stroke-dasharray:5 3}",
+        "</style>",
+        f'<rect x="0" y="0" width="{canvas_w:.2f}" height="{canvas_h:.2f}" fill="#ffffff"/>',
+        f'<line x1="{canvas_w / 2:.2f}" y1="0" x2="{canvas_w / 2:.2f}" y2="{canvas_h:.2f}" '
+        'stroke="#94a3b8" stroke-width="1" stroke-dasharray="4 4"/>',
+    ]
+
+    for row in rows:
+        if not row.polygon:
+            continue
+        pts = " ".join(f"{x:.2f},{y:.2f}" for x, y in row.polygon)
+        color = colors.get(row.shelf_side, "#64748b")
+        label = f"({row.layer},{row.column})"
+        parts.extend(
+            [
+                f'<polygon points="{pts}" fill="{color}" fill-opacity="0.16" stroke="{color}" stroke-width="1"/>',
+                f'<circle cx="{row.centroid_x:.2f}" cy="{row.centroid_y:.2f}" r="2" fill="{color}"/>',
+                f'<text x="{row.centroid_x + 3:.2f}" y="{row.centroid_y - 3:.2f}" fill="#111827">'
+                f"{escape(label)}</text>",
+                f'<text class="small" x="{row.centroid_x + 3:.2f}" y="{row.centroid_y + 6:.2f}" fill="#475569">'
+                f"side={row.shelf_side}</text>",
+            ]
+        )
+
+    for shelf_code, bound in bounds.items():
+        x1, y1 = bound.p1_x, bound.p1_y
+        x2, y2 = bound.p2_x, bound.p2_y
+        label_y = max(8.0, min(y1, y2) - 8.0)
+        parts.extend(
+            [
+                f'<line class="range" x1="{x1:.2f}" y1="{y1:.2f}" x2="{x2:.2f}" y2="{y2:.2f}"/>',
+                f'<circle cx="{x1:.2f}" cy="{y1:.2f}" r="3" fill="#16a34a"/>',
+                f'<circle cx="{x2:.2f}" cy="{y2:.2f}" r="3" fill="#16a34a"/>',
+                f'<text x="{x1 + 5:.2f}" y="{y1 - 5:.2f}" fill="#166534">P1</text>',
+                f'<text x="{x2 + 5:.2f}" y="{y2 - 5:.2f}" fill="#166534">P2</text>',
+                f'<text x="{min(x1, x2):.2f}" y="{label_y:.2f}" fill="#166534">'
+                f"{escape(shelf_code or '_default')} bottom: P1=({x1:.1f},{y1:.1f}) "
+                f"P2=({x2:.1f},{y2:.1f})</text>",
+            ]
+        )
+
+    parts.append("</svg>")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text("\n".join(parts), encoding="utf-8")
 
 
 def load_box_layout_rows(annotation_path: Path) -> list[BoxLayoutRow]:

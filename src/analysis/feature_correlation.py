@@ -65,6 +65,15 @@ def _box_dataframe(dataset: Dataset) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def _sort_pca_loadings_for_report(loadings: pd.DataFrame) -> pd.DataFrame:
+    pc_cols = [col for col in loadings.columns if col.startswith("PC")]
+    if loadings.empty or not pc_cols:
+        return loadings
+    ranked = loadings.copy()
+    ranked["_abs"] = ranked[pc_cols].abs().sum(axis=1)
+    return ranked.sort_values("_abs", ascending=False).drop(columns=["_abs"])
+
+
 def _feature_matrix(df: pd.DataFrame, feature_names: list[str]) -> pd.DataFrame:
     if df.empty or not feature_names:
         return pd.DataFrame()
@@ -903,10 +912,7 @@ def _write_visual_report(
         "PC1/PC2 载荷绝对值较大的特征：",
         "",
         _markdown_table(
-            frame_pca["loadings"]
-            .assign(_abs=lambda d: d.get("PC1", 0).abs() + d.get("PC2", 0).abs())
-            .sort_values("_abs", ascending=False)
-            .drop(columns=["_abs"]),
+            _sort_pca_loadings_for_report(frame_pca["loadings"]),
             [col for col in ["feature", "PC1", "PC2"] if col in frame_pca["loadings"].columns],
         ),
         "",
@@ -957,10 +963,7 @@ def _write_visual_report(
         "PC1/PC2 载荷绝对值较大的特征：",
         "",
         _markdown_table(
-            box_pca["loadings"]
-            .assign(_abs=lambda d: d.get("PC1", 0).abs() + d.get("PC2", 0).abs())
-            .sort_values("_abs", ascending=False)
-            .drop(columns=["_abs"]),
+            _sort_pca_loadings_for_report(box_pca["loadings"]),
             [col for col in ["feature", "PC1", "PC2"] if col in box_pca["loadings"].columns],
         ),
         "",

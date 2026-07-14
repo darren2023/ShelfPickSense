@@ -108,6 +108,7 @@ uv run python main.py infer-rule --record-dir data/demo --output outputs/rule_st
 ## 文档
 
 - [数据格式说明](docs/data-format.md)
+- [特征说明](docs/features.md)
 - [训练、评测与 benchmark](docs/usage.md)
 - [实时推理集成](docs/realtime.md)
 

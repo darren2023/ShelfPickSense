@@ -510,6 +510,38 @@ def test_cli_analyze_features(fixture_data_dir: Path, tmp_path: Path):
     assert "frame_pca_scatter.svg" in report
 
 
+def test_cli_analyze_features_with_single_frame_feature(fixture_data_dir: Path, tmp_path: Path):
+    import json
+
+    import pandas as pd
+
+    from analysis.cli import main
+
+    config_path = tmp_path / "single_frame_feature.json"
+    config_path.write_text(
+        json.dumps({"frame_features": ["rule.p0_any_collision"]}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    output_dir = tmp_path / "correlations_single_feature"
+    ret = main(
+        [
+            "analyze-features",
+            "--data-dir",
+            str(fixture_data_dir),
+            "--output",
+            str(output_dir),
+            "--feature-config",
+            str(config_path),
+        ]
+    )
+
+    assert ret == 0
+    frame_loadings = pd.read_csv(output_dir / "frame_pca_loadings.csv")
+    assert list(frame_loadings.columns) == ["feature", "PC1"]
+    assert (output_dir / "correlation_report.md").is_file()
+
+
 def test_cli_analyze_exported_features(fixture_data_dir: Path, tmp_path: Path):
     import json
 
