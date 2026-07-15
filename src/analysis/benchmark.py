@@ -79,6 +79,7 @@ def run_benchmark(
     jobs: int = 1,
     feature_selection: FeatureSelection | None = None,
     filter_empty_skeleton: bool = True,
+    baseline_report: ModelEvaluation | None = None,
 ) -> BenchmarkResult:
     """批量训练多个模型，并在同一评测集上生成对比结果。"""
     train_data_dir = Path(train_data_dir)
@@ -133,13 +134,16 @@ def run_benchmark(
     evaluator = Evaluator(eval_records, registry=registry)
     predictions_filename = prediction_filename_for_records(eval_records)
 
-    logger.info("benchmark 运行规则基线: {}", RULE_BASELINE_NAME)
-    baseline_report = run_rule_baseline(
-        eval_records,
-        data_dir=str(eval_data_dir.resolve()),
-        output_dir=output_dir / RULE_BASELINE_NAME,
-        predictions_filename=predictions_filename,
-    )
+    if baseline_report is None:
+        logger.info("benchmark 运行规则基线: {}", RULE_BASELINE_NAME)
+        baseline_report = run_rule_baseline(
+            eval_records,
+            data_dir=str(eval_data_dir.resolve()),
+            output_dir=output_dir / RULE_BASELINE_NAME,
+            predictions_filename=predictions_filename,
+        )
+    else:
+        logger.info("benchmark 复用规则基线: {}", baseline_report.model_name)
 
     def _run_one(model_name: str) -> tuple[str, TrainResult, ModelEvaluation]:
         model_dir = output_dir / model_name

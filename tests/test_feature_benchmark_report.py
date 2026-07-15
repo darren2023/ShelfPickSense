@@ -125,5 +125,5 @@ def test_regenerate_feature_benchmark_report_from_existing_summary(tmp_path: Pat
     assert regenerated != "# placeholder"
     assert "多特征配置 Benchmark 对比报告" in regenerated
     assert "各特征配置模型明细" in regenerated
-    assert "rule_baseline" in regenerated
+    assert "rule_collision" in regenerated
     assert "超过基线" in regenerated

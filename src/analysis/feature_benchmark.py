@@ -16,12 +16,15 @@ from analysis.benchmark import (
     _comparison_markdown_table,
     _fmt,
     _write_benchmark_report,
+    prediction_filename_for_records,
     run_benchmark,
 )
 from analysis.evaluation import BoxMetrics, ModelEvaluation, PickingMetrics
 from analysis.train import TrainResult
 from analysis.features.selection import FeatureSelection, load_feature_selection
 from analysis.models import SUPPORTED_MODEL_NAMES
+from analysis.records import load_all_records
+from analysis.rule_baseline import RULE_COLLISION_BASELINE_NAME, run_external_collision_baseline
 
 
 @dataclass(frozen=True)
@@ -500,6 +503,20 @@ def run_feature_benchmarks(plan: FeatureBenchmarkPlan) -> FeatureBenchmarkBatchR
     output_dir.mkdir(parents=True, exist_ok=False)
     base_dir = Path(plan.source_path).parent if plan.source_path else Path.cwd()
     eval_data_dir = plan.eval_data_dir or plan.train_data_dir
+    eval_records = load_all_records(eval_data_dir)
+    baseline_predictions_filename = prediction_filename_for_records(eval_records)
+    logger.info("运行批量特征 benchmark 规则基线: {}", RULE_COLLISION_BASELINE_NAME)
+    baseline_report = run_external_collision_baseline(
+        eval_records,
+        data_dir=str(eval_data_dir.resolve()),
+        output_dir=output_dir / RULE_COLLISION_BASELINE_NAME,
+        video_fps=15.0,
+        alarm_min_consecutive_frames=3,
+        alarm_cooldown_frames=0,
+        pose_frame_interval=2,
+        model_name=RULE_COLLISION_BASELINE_NAME,
+        predictions_filename=baseline_predictions_filename,
+    )
 
     set_results: list[FeatureBenchmarkSetResult] = []
     for spec in plan.sets:
@@ -518,6 +535,7 @@ def run_feature_benchmarks(plan: FeatureBenchmarkPlan) -> FeatureBenchmarkBatchR
             model_names=plan.model_names,
             jobs=plan.jobs,
             feature_selection=feature_selection,
+            baseline_report=baseline_report,
         )
         best_model, best_macro_f1 = _best_from_benchmark(benchmark)
         set_results.append(

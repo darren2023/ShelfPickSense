@@ -259,11 +259,21 @@ def test_cli_benchmark_features_runs_multiple_feature_sets(tmp_path: Path):
     assert (run_dir / "feature_benchmark_report.md").is_file()
     assert (run_dir / "all_features" / "benchmark_summary.json").is_file()
     assert (run_dir / "selected" / "benchmark_summary.json").is_file()
+    assert (run_dir / "rule_collision" / "eval_report.json").is_file()
+    assert not (run_dir / "all_features" / "rule_baseline").exists()
+    assert not (run_dir / "selected" / "rule_baseline").exists()
     assert not (output_dir / "feature_benchmark_summary.json").exists()
 
     summary = json.loads((run_dir / "feature_benchmark_summary.json").read_text(encoding="utf-8"))
     assert len(summary["sets"]) == 2
     assert {item["name"] for item in summary["sets"]} == {"all_features", "selected"}
+    for item in summary["sets"]:
+        assert item["benchmark"]["baseline_report"]["model_name"] == "rule_collision"
+        assert (
+            item["benchmark"]["baseline_report"]["extra"]["source"]
+            == "box_human_det/services/event_engine/collision.py"
+        )
+        assert item["benchmark"]["comparison"][0]["model_name"] == "rule_collision"
     assert summary["output_dir"] == str(run_dir.resolve())
     report = (run_dir / "feature_benchmark_report.md").read_text(encoding="utf-8")
     assert "多特征配置 Benchmark 对比报告" in report

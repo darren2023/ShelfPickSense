@@ -565,6 +565,9 @@ models/feature_benchmark/
   run_2026-07-15_14-30-05/
     feature_benchmark_summary.json
     feature_benchmark_report.md
+    rule_collision/
+      eval_report.json
+      eval_predictions_*.json
     all_features/
       benchmark_summary.json
       benchmark_report.md
@@ -577,10 +580,10 @@ models/feature_benchmark/
 `feature_benchmark_report.md` 会汇总各特征配置下的最佳模型，并包含：
 
 - **各特征配置最佳模型汇总**：每个特征子集的最佳模型及主要指标
-- **各特征配置模型明细**：每个特征子集下全部模型的完整指标对比表（含 `rule_baseline` 与是否超过基线）
+- **各特征配置模型明细**：每个特征子集下全部模型的完整指标对比表（含 `rule_collision` 与是否超过基线）
 - **结论**：列出各特征配置的最佳模型，并给出全局推荐组合
 
-各特征子目录内的 `benchmark_report.md` 同样包含规则基线对比与无骨架帧过滤后的训练统计。
+`rule_collision` 使用 `infer-collision` 的默认参数，作为多特征配置 benchmark 的固定规则基线。一次 `benchmark-features` 运行中，`rule_collision` 只会在 run 目录下执行一次；各特征子目录内的 `benchmark_report.md` 会复用同一份规则基线结果，并包含规则基线对比与无骨架帧过滤后的训练统计。
 
 ## Benchmark 训练测试报告
 
