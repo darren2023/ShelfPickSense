@@ -252,15 +252,20 @@ def test_cli_benchmark_features_runs_multiple_feature_sets(tmp_path: Path):
     ret = main(["benchmark-features", "--plan", str(plan_path)])
 
     assert ret == 0
-    assert (output_dir / "feature_benchmark_summary.json").is_file()
-    assert (output_dir / "feature_benchmark_report.md").is_file()
-    assert (output_dir / "all_features" / "benchmark_summary.json").is_file()
-    assert (output_dir / "selected" / "benchmark_summary.json").is_file()
+    run_dirs = [path for path in output_dir.iterdir() if path.is_dir() and path.name.startswith("run_")]
+    assert len(run_dirs) == 1
+    run_dir = run_dirs[0]
+    assert (run_dir / "feature_benchmark_summary.json").is_file()
+    assert (run_dir / "feature_benchmark_report.md").is_file()
+    assert (run_dir / "all_features" / "benchmark_summary.json").is_file()
+    assert (run_dir / "selected" / "benchmark_summary.json").is_file()
+    assert not (output_dir / "feature_benchmark_summary.json").exists()
 
-    summary = json.loads((output_dir / "feature_benchmark_summary.json").read_text(encoding="utf-8"))
+    summary = json.loads((run_dir / "feature_benchmark_summary.json").read_text(encoding="utf-8"))
     assert len(summary["sets"]) == 2
     assert {item["name"] for item in summary["sets"]} == {"all_features", "selected"}
-    report = (output_dir / "feature_benchmark_report.md").read_text(encoding="utf-8")
+    assert summary["output_dir"] == str(run_dir.resolve())
+    report = (run_dir / "feature_benchmark_report.md").read_text(encoding="utf-8")
     assert "多特征配置 Benchmark 对比报告" in report
     assert "各特征配置最佳模型汇总" in report
     assert "各特征配置模型明细" in report

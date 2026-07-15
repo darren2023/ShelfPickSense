@@ -114,7 +114,9 @@ def test_regenerate_feature_benchmark_report_from_existing_summary(tmp_path: Pat
     )
 
     assert main(["benchmark-features", "--plan", str(plan_path)]) == 0
-    report_path = output_dir / "feature_benchmark_report.md"
+    run_dirs = [path for path in output_dir.iterdir() if path.is_dir() and path.name.startswith("run_")]
+    assert len(run_dirs) == 1
+    report_path = run_dirs[0] / "feature_benchmark_report.md"
     original = report_path.read_text(encoding="utf-8")
     report_path.write_text("# placeholder", encoding="utf-8")
 

@@ -92,6 +92,34 @@ def _safe_dir_name(text: str) -> str:
     return safe.strip("_") or "feature_set"
 
 
+def _timestamped_run_dir(base_dir: Path) -> Path:
+    stamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    candidate = base_dir / f"run_{stamp}"
+    if not candidate.exists():
+        return candidate
+    suffix = 2
+    while True:
+        alt = base_dir / f"run_{stamp}_{suffix}"
+        if not alt.exists():
+            return alt
+        suffix += 1
+
+
+def _latest_batch_output_dir(base_dir: Path) -> Path | None:
+    if (base_dir / "feature_benchmark_summary.json").is_file():
+        return base_dir
+    if not base_dir.is_dir():
+        return None
+    candidates = [
+        child
+        for child in base_dir.iterdir()
+        if child.is_dir() and (child / "feature_benchmark_summary.json").is_file()
+    ]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda path: path.stat().st_mtime)
+
+
 def _optional_string_list(data: dict[str, Any], key: str) -> list[str] | None:
     if key not in data:
         return None
@@ -447,7 +475,7 @@ def _load_batch_result_from_plan(plan: FeatureBenchmarkPlan) -> FeatureBenchmark
 
 def regenerate_feature_benchmark_report(plan: FeatureBenchmarkPlan) -> FeatureBenchmarkBatchResult:
     """基于已有 benchmark 结果重新生成 Markdown 报告，不重新训练或评测模型。"""
-    output_dir = Path(plan.output_dir)
+    output_dir = _latest_batch_output_dir(Path(plan.output_dir)) or Path(plan.output_dir)
     summary_path = output_dir / "feature_benchmark_summary.json"
     if summary_path.is_file():
         batch = load_feature_benchmark_batch_result(output_dir)
@@ -466,8 +494,10 @@ def regenerate_feature_benchmark_report(plan: FeatureBenchmarkPlan) -> FeatureBe
 
 
 def run_feature_benchmarks(plan: FeatureBenchmarkPlan) -> FeatureBenchmarkBatchResult:
-    output_dir = Path(plan.output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
+    base_output_dir = Path(plan.output_dir)
+    base_output_dir.mkdir(parents=True, exist_ok=True)
+    output_dir = _timestamped_run_dir(base_output_dir)
+    output_dir.mkdir(parents=True, exist_ok=False)
     base_dir = Path(plan.source_path).parent if plan.source_path else Path.cwd()
     eval_data_dir = plan.eval_data_dir or plan.train_data_dir
 

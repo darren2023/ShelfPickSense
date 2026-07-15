@@ -554,7 +554,7 @@ uv run python main.py benchmark-features \
   --report-only
 ```
 
-`--report-only` 会优先读取输出目录下的 `feature_benchmark_summary.json`；若不存在，则回退读取各特征配置子目录中的 `benchmark_summary.json`。
+每次运行都会在 `output_dir` 下创建一个带时间戳的子目录，例如 `run_2026-07-15_14-30-05`。`--report-only` 会优先读取 `output_dir` 下最新的 run 子目录；若直接传入旧版结果目录，也仍兼容读取该目录下的 `feature_benchmark_summary.json`。
 
 `feature_config` 既可以是相对项目根目录的路径（如 `configs/selected_features.example.json`），也可以是相对 plan 文件所在目录的路径（如 `selected_features.example.json`）。
 
@@ -562,15 +562,16 @@ uv run python main.py benchmark-features \
 
 ```text
 models/feature_benchmark/
-  feature_benchmark_summary.json
-  feature_benchmark_report.md
-  all_features/
-    benchmark_summary.json
-    benchmark_report.md
-    sklearn_rf/
+  run_2026-07-15_14-30-05/
+    feature_benchmark_summary.json
+    feature_benchmark_report.md
+    all_features/
+      benchmark_summary.json
+      benchmark_report.md
+      sklearn_rf/
+        ...
+    selected_spatial/
       ...
-  selected_spatial/
-    ...
 ```
 
 `feature_benchmark_report.md` 会汇总各特征配置下的最佳模型，并包含：
