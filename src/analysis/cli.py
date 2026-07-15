@@ -1051,7 +1051,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_export.add_argument(
         "--format",
-        default="csv",
+        default="parquet",
         choices=["parquet", "csv", "jsonl", "all"],
         help="特征文件格式（默认 parquet；可选 csv/jsonl/all）",
     )

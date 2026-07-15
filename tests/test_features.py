@@ -129,6 +129,89 @@ def test_frame_feature_groups_are_not_merged_into_default_frame_features():
     assert groups[1].features["skeleton.left_wrist_x_norm"] == pytest.approx(200.0 / 640.0)
 
 
+def test_skeleton_shape_features_and_window_deltas():
+    import math
+    import pandas as pd
+
+    from analysis.constants import (
+        LEFT_ANKLE_IDX,
+        LEFT_ELBOW_IDX,
+        LEFT_HIP_IDX,
+        LEFT_KNEE_IDX,
+        LEFT_SHOULDER_IDX,
+        LEFT_WRIST_IDX,
+        RIGHT_ANKLE_IDX,
+        RIGHT_ELBOW_IDX,
+        RIGHT_HIP_IDX,
+        RIGHT_KNEE_IDX,
+        RIGHT_SHOULDER_IDX,
+        RIGHT_WRIST_IDX,
+    )
+    from analysis.features.base import FeatureContext
+    from analysis.features.registry import default_registry
+    from analysis.records import FramePersons, RecordData
+
+    def _person(*, hip_shift_x: float, bbox_y_shift: float) -> dict:
+        keypoints: list[list[float | None]] = [[None, None, None] for _ in range(17)]
+        coords = {
+            LEFT_SHOULDER_IDX: (100.0, 100.0),
+            RIGHT_SHOULDER_IDX: (140.0, 100.0),
+            LEFT_ELBOW_IDX: (90.0, 125.0),
+            RIGHT_ELBOW_IDX: (150.0, 125.0),
+            LEFT_WRIST_IDX: (80.0, 150.0),
+            RIGHT_WRIST_IDX: (160.0, 150.0),
+            LEFT_HIP_IDX: (100.0 + hip_shift_x, 200.0),
+            RIGHT_HIP_IDX: (140.0 + hip_shift_x, 200.0),
+            LEFT_KNEE_IDX: (100.0 + hip_shift_x, 250.0),
+            RIGHT_KNEE_IDX: (140.0 + hip_shift_x, 250.0),
+            LEFT_ANKLE_IDX: (100.0 + hip_shift_x, 300.0),
+            RIGHT_ANKLE_IDX: (140.0 + hip_shift_x, 300.0),
+        }
+        for idx, (x, y) in coords.items():
+            keypoints[idx] = [x, y, 0.9]
+        return {
+            "person_track_id": 1,
+            "keypoints": keypoints,
+            "bbox": [70.0, 80.0 + bbox_y_shift, 170.0, 320.0 + bbox_y_shift],
+        }
+
+    record = RecordData(
+        record_id="shape_test",
+        record_dir=Path("."),
+        skeleton=pd.DataFrame(),
+        annotation={},
+        event_review=None,
+        labels=__import__("analysis.labels", fromlist=["RecordLabels"]).RecordLabels(record_id="shape_test"),
+        infer_width=640.0,
+        infer_height=480.0,
+        box_tokens=[],
+    )
+    frames = {
+        1: FramePersons(frame_idx=1, timestamp_sec=0.0, persons=[_person(hip_shift_x=60.0, bbox_y_shift=-10.0)]),
+        6: FramePersons(frame_idx=6, timestamp_sec=0.2, persons=[_person(hip_shift_x=0.0, bbox_y_shift=0.0)]),
+    }
+    ctx = FeatureContext.from_record(record, frames[6], frame_index=frames)
+    feat = default_registry().extract_frame_feature_groups_from_context(ctx)[0].features
+
+    previous_torso = abs(math.degrees(math.atan2(60.0, 100.0))) / 90.0
+    assert feat["skeleton.torso_angle_norm"] == pytest.approx(0.0)
+    assert feat["skeleton.torso_angle_5_abs"] == pytest.approx(previous_torso)
+    assert feat["skeleton.spread"] > 0.0
+    assert feat["skeleton.fold"] >= 0.0
+    assert feat["skeleton.limb_var"] >= 0.0
+    assert feat["skeleton.point_ratio"] == pytest.approx(12 / 17)
+    assert feat["skeleton.mean_confidence"] == pytest.approx(12 * 0.9 / 17)
+    assert feat["skeleton.quality_bad"] == pytest.approx(
+        1.0 - (0.65 * (12 / 17) + 0.35 * (12 * 0.9 / 17))
+    )
+    assert feat["skeleton.bbox_center_x_norm"] == pytest.approx(120.0 / 640.0)
+    assert feat["skeleton.bbox_center_y_norm"] == pytest.approx(200.0 / 480.0)
+    assert feat["skeleton.bbox_aspect_norm"] == pytest.approx((100.0 / 240.0) / 2.5)
+    assert feat["skeleton.bbox_area_norm"] == pytest.approx((100.0 * 240.0) / (640.0 * 480.0))
+    assert feat["skeleton.bbox_delta_y_5"] == pytest.approx(10.0 / 480.0)
+    assert feat["skeleton.bbox_motion_5"] == pytest.approx(10.0 / 480.0)
+
+
 def test_foot_temporal_movement_features():
     from analysis.constants import LEFT_ANKLE_IDX, RIGHT_ANKLE_IDX
     from analysis.features.base import FeatureContext

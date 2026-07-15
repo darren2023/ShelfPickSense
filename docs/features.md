@@ -45,7 +45,7 @@ p0, p1, p2
 
 ## `skeleton`：骨骼统计特征
 
-`SkeletonFeatureExtractor` 只输出帧级特征，主要描述当前帧的人数、画面尺寸、最佳人物的手腕位置和人体锚点。
+`SkeletonFeatureExtractor` 只输出帧级特征，主要描述当前人物的手腕位置、人体锚点、骨架形态、检测质量和人体框运动。
 
 | 特征 | 含义 |
 | --- | --- |
@@ -55,8 +55,21 @@ p0, p1, p2
 | `skeleton.right_wrist_x_norm` / `skeleton.right_wrist_y_norm` | 最佳人物右手腕坐标，分别除以 `infer_width` / `infer_height`。 |
 | `skeleton.wrist_spread` | 左右手腕距离，除以 `max(infer_width, infer_height)`。 |
 | `skeleton.anchor_x_norm` / `skeleton.anchor_y_norm` | 人体锚点坐标。优先使用双肩中心，否则使用可见关键点均值。 |
+| `skeleton.torso_angle_norm` | 肩中点到髋中点连线相对竖直方向的夹角，除以 90 度。越接近 1 越水平。 |
+| `skeleton.spread` | 8 组肩、髋、腕、踝关键点距离除以人体框对角线后的均值。 |
+| `skeleton.fold` | 肘、肩、髋、膝 8 个关节折叠程度均值，伸直接近 0，弯曲增大。 |
+| `skeleton.limb_var` | 上述 8 组归一化肢体距离的标准差。 |
+| `skeleton.point_ratio` | 有坐标关键点数量除以 17。 |
+| `skeleton.mean_confidence` | 17 个关键点置信度均值，缺失点按 0 计。 |
+| `skeleton.quality_bad` | `1 - (0.65 * point_ratio + 0.35 * mean_confidence)`。 |
+| `skeleton.bbox_center_x_norm` / `skeleton.bbox_center_y_norm` | 人体检测框中心坐标归一化值。 |
+| `skeleton.bbox_aspect_norm` | 人体框宽高比截断到 2.5 后再除以 2.5。 |
+| `skeleton.bbox_area_norm` | 人体框面积除以推理画面面积。 |
+| `skeleton.bbox_delta_y_<n>` | 当前人体框中心 y 相对前 `n` 帧的变化，`n` 为 5 或 10。 |
+| `skeleton.bbox_motion_<n>` | 当前人体框中心相对前 `n` 帧的二维移动距离，`n` 为 5 或 10。 |
+| `skeleton.torso_angle_<n>_abs` / `spread_<n>_abs` / `fold_<n>_abs` / `limb_var_<n>_abs` | 当前骨架形态相对前 `n` 帧的绝对变化量，`n` 为 5 或 10。 |
 
-无人物时，除人数和画面尺寸外，其余骨骼特征填 `0.0`。
+形态几何计算时，置信度低于 `0.2` 的关键点视为无效。无人物时，除 `quality_bad` 为 `1.0` 外，其余骨骼特征填 `0.0`。
 
 ## `spatial`：人体与货框空间关系
 
