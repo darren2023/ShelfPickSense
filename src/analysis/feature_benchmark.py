@@ -134,6 +134,47 @@ def _optional_string_list(data: dict[str, Any], key: str) -> list[str] | None:
     return list(dict.fromkeys(value))
 
 
+def _set_spec_to_dict(spec: FeatureBenchmarkSetSpec) -> dict[str, Any]:
+    payload: dict[str, Any] = {"name": spec.name}
+    if spec.feature_config:
+        payload["feature_config"] = spec.feature_config
+    if spec.frame_features is not None:
+        payload["frame_features"] = list(spec.frame_features)
+    if spec.box_features is not None:
+        payload["box_features"] = list(spec.box_features)
+    return payload
+
+
+def _plan_to_dict(
+    plan: FeatureBenchmarkPlan,
+    *,
+    run_output_dir: Path | None = None,
+) -> dict[str, Any]:
+    eval_data_dir = plan.eval_data_dir or plan.train_data_dir
+    payload: dict[str, Any] = {
+        "train_data_dir": str(plan.train_data_dir.resolve()),
+        "eval_data_dir": str(eval_data_dir.resolve()),
+        "output_dir": str(plan.output_dir.resolve()),
+        "models": list(plan.model_names),
+        "jobs": int(plan.jobs),
+        "feature_sets": [_set_spec_to_dict(spec) for spec in plan.sets],
+    }
+    if run_output_dir is not None:
+        payload["run_output_dir"] = str(run_output_dir.resolve())
+    if plan.source_path:
+        payload["source_path"] = plan.source_path
+    return payload
+
+
+def _write_resolved_plan(plan: FeatureBenchmarkPlan, output_dir: Path) -> Path:
+    path = output_dir / "feature_benchmark_plan.json"
+    path.write_text(
+        json.dumps(_plan_to_dict(plan, run_output_dir=output_dir), ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    return path
+
+
 def _parse_set_spec(data: dict[str, Any], index: int) -> FeatureBenchmarkSetSpec:
     if not isinstance(data, dict):
         raise ValueError(f"feature_sets[{index}] 必须是对象")
@@ -501,8 +542,10 @@ def run_feature_benchmarks(plan: FeatureBenchmarkPlan) -> FeatureBenchmarkBatchR
     base_output_dir.mkdir(parents=True, exist_ok=True)
     output_dir = _timestamped_run_dir(base_output_dir)
     output_dir.mkdir(parents=True, exist_ok=False)
+    plan_path = _write_resolved_plan(plan, output_dir)
     base_dir = Path(plan.source_path).parent if plan.source_path else Path.cwd()
     eval_data_dir = plan.eval_data_dir or plan.train_data_dir
+    logger.info("多特征 benchmark 运行配置已保存: {}", plan_path)
     eval_records = load_all_records(eval_data_dir)
     baseline_predictions_filename = prediction_filename_for_records(eval_records)
     logger.info("运行批量特征 benchmark 规则基线: {}", RULE_COLLISION_BASELINE_NAME)
