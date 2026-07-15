@@ -100,7 +100,12 @@ def run_benchmark(
     logger.info("benchmark 加载训练数据: {}", train_data_dir)
     train_records = load_all_records(train_data_dir)
     logger.info("benchmark 构建训练数据集")
-    train_dataset = build_dataset(train_records, registry, feature_selection=feature_selection)
+    train_dataset = build_dataset(
+        train_records,
+        registry,
+        feature_selection=feature_selection,
+        feature_jobs=workers,
+    )
     skipped_skeleton = 0
     if filter_empty_skeleton:
         train_dataset, skipped_skeleton = filter_empty_skeleton_frames(train_dataset, train_records)

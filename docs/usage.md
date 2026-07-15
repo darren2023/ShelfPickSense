@@ -109,6 +109,16 @@ uv run python main.py export-features \
   --format csv
 ```
 
+多记录目录可以按 record 并行提取：
+
+```bash
+uv run python main.py export-features \
+  --data-dir data/train \
+  --feature-jobs 4
+```
+
+`--feature-jobs` 同样适用于 `train` 和从原始 `--data-dir` 执行的 `analyze-features`。`benchmark` 使用已有的 `--jobs` 同时控制特征提取并行和模型并行。单条 record 内部仍按帧串行处理，因为部分时序特征依赖历史帧。
+
 支持的格式：
 
 - `parquet`：默认格式，适合后续程序读取。

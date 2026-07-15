@@ -1127,10 +1127,11 @@ def analyze_feature_correlations(
     threshold: float = 0.9,
     top_n: int = 100,
     feature_selection: FeatureSelection | None = None,
+    feature_jobs: int = 1,
 ) -> CorrelationAnalysisResult:
     """从原始记录目录提取特征并分析相关性。"""
     data_dir = Path(data_dir)
-    dataset = load_dataset(data_dir, feature_selection=feature_selection)
+    dataset = load_dataset(data_dir, feature_selection=feature_selection, feature_jobs=feature_jobs)
     return _analyze_feature_dataframes(
         input_source=str(data_dir),
         frame_df=_frame_dataframe(dataset),

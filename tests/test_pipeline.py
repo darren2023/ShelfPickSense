@@ -341,6 +341,40 @@ def test_cli_export_features_defaults_output_to_record_dir(fixture_data_dir: Pat
     assert meta["output_dir"] == str(fixture_data_dir)
 
 
+def test_cli_export_features_parallel_records(tmp_path: Path):
+    import json
+
+    import pandas as pd
+
+    from analysis.cli import main
+    from fixtures import make_fixture_record
+
+    data_dir = tmp_path / "records"
+    make_fixture_record(data_dir / "record_001")
+    make_fixture_record(data_dir / "record_002")
+    output_dir = tmp_path / "parallel_features"
+
+    ret = main(
+        [
+            "export-features",
+            "--data-dir",
+            str(data_dir),
+            "--output",
+            str(output_dir),
+            "--format",
+            "csv",
+            "--feature-jobs",
+            "2",
+        ]
+    )
+
+    assert ret == 0
+    meta = json.loads((output_dir / "features_meta.json").read_text(encoding="utf-8"))
+    assert meta["frame_count"] == 20
+    frame_df = pd.read_csv(output_dir / "frame_features.csv")
+    assert set(frame_df["record_id"]) == {"record_001", "record_002"}
+
+
 def test_cli_feature_config_filters_export_and_train(fixture_data_dir: Path, tmp_path: Path):
     import json
 

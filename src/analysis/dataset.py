@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
 
 import numpy as np
@@ -78,6 +79,15 @@ class Dataset:
         return sum(1 for s in self.frame_samples if s.is_picking)
 
 
+@dataclass
+class _RecordExtractionResult:
+    record_index: int
+    record_id: str
+    frame_count: int
+    frame_samples: list[FrameSample]
+    box_samples: list[BoxSample]
+
+
 def frame_has_valid_skeleton(
     frame: FramePersons,
     *,
@@ -111,6 +121,74 @@ def _feature_extract_log_interval(total_frames: int) -> int:
     if total_frames <= 5000:
         return 200
     return 500
+
+
+def _extract_record_samples(
+    record_index: int,
+    record: RecordData,
+    registry: FeatureRegistry,
+    frame_feature_names: list[str],
+    box_feature_names: list[str],
+) -> _RecordExtractionResult:
+    frame_samples: list[FrameSample] = []
+    box_samples: list[BoxSample] = []
+    frames = record.frames()
+    frame_index = record.frame_index()
+
+    for frame in frames:
+        ctx = FeatureContext.from_record(record, frame, frame_index=frame_index)
+        label = record.labels.label_for(frame.frame_idx)
+        target_side, target_layer_norm, target_col_norm = _layout_target_from_label(record, label)
+        for frame_feat in registry.extract_frame_feature_groups_from_context(ctx):
+            frame_samples.append(
+                FrameSample(
+                    record_id=record.record_id,
+                    frame_idx=frame.frame_idx,
+                    person_track_id=frame_feat.person_track_id,
+                    x=frame_feat.to_vector(frame_feature_names),
+                    is_picking=label.is_picking,
+                    target_layout_shelf_side=target_side if label.is_picking else 0,
+                    target_layout_layer_norm=target_layer_norm if label.is_picking else 0.0,
+                    target_layout_column_norm=target_col_norm if label.is_picking else 0.0,
+                )
+            )
+
+        if label.is_picking:
+            confirmed_codes = set(label.confirmed_box_codes)
+            for pb in registry.extract_per_box_features_from_context(ctx):
+                layout_entry = record.box_layout.get(pb.box_token)
+                box_code = layout_entry.encode() if layout_entry else 0
+                box_stats = (
+                    record.shelf_layout_stats.get(layout_entry.shelf_code or "_default")
+                    if layout_entry
+                    else None
+                )
+                layer_norm, col_norm = (
+                    normalized_layout_targets(layout_entry, box_stats)
+                    if layout_entry
+                    else (0.0, 0.0)
+                )
+                box_samples.append(
+                    BoxSample(
+                        record_id=record.record_id,
+                        frame_idx=frame.frame_idx,
+                        box_token=pb.box_token,
+                        box_code=box_code,
+                        x=pb.to_vector(box_feature_names),
+                        is_target=box_code in confirmed_codes,
+                        target_layout_shelf_side=layout_entry.shelf_side if layout_entry else 0,
+                        target_layout_layer_norm=layer_norm,
+                        target_layout_column_norm=col_norm,
+                    )
+                )
+
+    return _RecordExtractionResult(
+        record_index=record_index,
+        record_id=record.record_id,
+        frame_count=len(frames),
+        frame_samples=frame_samples,
+        box_samples=box_samples,
+    )
 
 
 def filter_empty_skeleton_frames(
@@ -152,6 +230,7 @@ def build_dataset(
     feature_selection: FeatureSelection | None = None,
     *,
     filter_empty_skeleton: bool = False,
+    feature_jobs: int = 1,
 ) -> Dataset:
     reg = registry or default_registry()
     frame_samples: list[FrameSample] = []
@@ -168,7 +247,6 @@ def build_dataset(
         filter_empty_skeleton,
     )
 
-    processed_frames = 0
     frame_feature_names = reg.frame_feature_names()
     box_feature_names = reg.per_box_schema_feature_names()
     if feature_selection:
@@ -179,6 +257,61 @@ def build_dataset(
             box_feature_names=box_feature_names,
         )
 
+    workers = max(1, int(feature_jobs or 1))
+    use_parallel = workers > 1 and len(records) > 1
+    if use_parallel:
+        max_workers = min(workers, len(records))
+        logger.info("启用多进程特征提取: workers={}, records={}", max_workers, len(records))
+        results: list[_RecordExtractionResult] = []
+        processed_frames = 0
+        with ProcessPoolExecutor(max_workers=max_workers) as executor:
+            futures = [
+                executor.submit(
+                    _extract_record_samples,
+                    record_index,
+                    record,
+                    reg,
+                    frame_feature_names,
+                    box_feature_names,
+                )
+                for record_index, record in enumerate(records, start=1)
+            ]
+            for future in as_completed(futures):
+                result = future.result()
+                results.append(result)
+                processed_frames += result.frame_count
+                logger.info(
+                    "提取特征完成 [{}/{}]: record={} frames={} progress={}/{} ({:.1f}%)",
+                    result.record_index,
+                    len(records),
+                    result.record_id,
+                    result.frame_count,
+                    processed_frames,
+                    total_frames,
+                    100.0 * processed_frames / max(total_frames, 1),
+                )
+        for result in sorted(results, key=lambda item: item.record_index):
+            frame_samples.extend(result.frame_samples)
+            box_samples.extend(result.box_samples)
+        dataset = Dataset(
+            frame_samples=frame_samples,
+            box_samples=box_samples,
+            frame_feature_names=frame_feature_names,
+            box_feature_names=box_feature_names,
+        )
+        if filter_empty_skeleton:
+            dataset, _ = filter_empty_skeleton_frames(dataset, records)
+        logger.info(
+            "特征提取完成: frames={}, positive_frames={}, box_samples={}, frame_features={}, box_features={}",
+            dataset.frame_count,
+            dataset.positive_frame_count,
+            len(dataset.box_samples),
+            len(dataset.frame_feature_names),
+            len(dataset.box_feature_names),
+        )
+        return dataset
+
+    processed_frames = 0
     for record_index, record in enumerate(records, start=1):
         frames = record.frames()
         frame_index = record.frame_index()
@@ -272,6 +405,7 @@ def load_dataset(
     feature_selection: FeatureSelection | None = None,
     *,
     filter_empty_skeleton: bool = False,
+    feature_jobs: int = 1,
 ) -> Dataset:
     from pathlib import Path
 
@@ -281,4 +415,5 @@ def load_dataset(
         records,
         feature_selection=feature_selection,
         filter_empty_skeleton=filter_empty_skeleton,
+        feature_jobs=feature_jobs,
     )

@@ -66,6 +66,7 @@ def _cmd_train(args: argparse.Namespace) -> int:
         model_name=args.model,
         feature_selection=load_feature_selection(args.feature_config),
         filter_empty_skeleton=not args.keep_empty_skeleton_frames,
+        feature_jobs=args.feature_jobs,
     )
     logger.info(
         "训练完成: model={}, frames={}, positive_frames={}, box_samples={}, skipped_empty_skeleton={}",
@@ -633,7 +634,7 @@ def _cmd_export_features(args: argparse.Namespace) -> int:
         args.feature_config or "",
     )
     feature_selection = load_feature_selection(args.feature_config)
-    dataset = load_dataset(data_dir, feature_selection=feature_selection)
+    dataset = load_dataset(data_dir, feature_selection=feature_selection, feature_jobs=args.feature_jobs)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     frame_rows = []
@@ -749,6 +750,7 @@ def _cmd_analyze_features(args: argparse.Namespace) -> int:
             threshold=args.threshold,
             top_n=args.top_n,
             feature_selection=feature_selection,
+            feature_jobs=args.feature_jobs,
         )
     logger.info(
         "特征相关性分析完成: frames={}, box_samples={}, output={}",
@@ -967,6 +969,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="模型类型",
     )
     p_train.add_argument("--feature-config", default="", help="特征选择 JSON 配置路径（默认使用全部特征）")
+    p_train.add_argument("--feature-jobs", type=int, default=1, help="特征提取并行 record 数（默认 1）")
     p_train.add_argument(
         "--keep-empty-skeleton-frames",
         action="store_true",
@@ -1056,6 +1059,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="特征文件格式（默认 parquet；可选 csv/jsonl/all）",
     )
     p_export.add_argument("--feature-config", default="", help="特征选择 JSON 配置路径（默认导出全部特征）")
+    p_export.add_argument("--feature-jobs", type=int, default=1, help="特征提取并行 record 数（默认 1）")
     _add_logging_args(p_export)
     p_export.set_defaults(func=_cmd_export_features)
 
@@ -1073,6 +1077,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_analyze.add_argument("--threshold", type=float, default=0.9, help="高相关特征对阈值（默认 0.9）")
     p_analyze.add_argument("--top-n", type=int, default=100, help="最多输出高相关特征对数量（默认 100）")
     p_analyze.add_argument("--feature-config", default="", help="特征选择 JSON 配置路径（默认分析全部特征）")
+    p_analyze.add_argument("--feature-jobs", type=int, default=1, help="从原始 data-dir 提取特征时的并行 record 数（默认 1）")
     _add_logging_args(p_analyze)
     p_analyze.set_defaults(func=_cmd_analyze_features)
 

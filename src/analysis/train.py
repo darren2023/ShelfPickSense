@@ -40,6 +40,7 @@ def train_model(
     registry: FeatureRegistry | None = None,
     feature_selection: FeatureSelection | None = None,
     filter_empty_skeleton: bool = True,
+    feature_jobs: int = 1,
 ) -> TrainResult:
     data_dir = Path(data_dir)
     output_dir = Path(output_dir)
@@ -48,7 +49,7 @@ def train_model(
     logger.info("训练记录加载完成: records={}", len(records))
     reg = registry or default_registry()
     logger.debug("开始构建训练样本")
-    dataset = build_dataset(records, reg, feature_selection=feature_selection)
+    dataset = build_dataset(records, reg, feature_selection=feature_selection, feature_jobs=feature_jobs)
     skipped = 0
     if filter_empty_skeleton:
         dataset, skipped = filter_empty_skeleton_frames(dataset, records)
