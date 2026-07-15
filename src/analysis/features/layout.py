@@ -18,6 +18,15 @@ class BoxLayoutFeatureExtractor(FeatureExtractor):
     def extract_frame(self, ctx: FeatureContext) -> dict[str, float]:
         return {}
 
+    def per_box_feature_names(self) -> list[str]:
+        return [
+            "shelf_side",
+            "layout_layer",
+            "layout_column",
+            "shelf_layer_count",
+            "shelf_column_count_mean",
+        ]
+
     def extract_per_box(self, ctx: FeatureContext) -> dict[str, dict[str, float]]:
         layout: dict[str, BoxNumericCode] = ctx.record.box_layout
         if not layout:

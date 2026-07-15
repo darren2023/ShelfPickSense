@@ -41,6 +41,7 @@ def _layout_target_from_label(record: RecordData, label) -> tuple[int, float, fl
 class FrameSample:
     record_id: str
     frame_idx: int
+    person_track_id: int | None
     x: np.ndarray
     is_picking: bool
     target_layout_shelf_side: int = 0
@@ -168,16 +169,17 @@ def build_dataset(
     )
 
     processed_frames = 0
-    for record_index, record in enumerate(records, start=1):
-        if not frame_feature_names:
-            frame_feature_names = reg.frame_feature_names(record)
-            if feature_selection:
-                frame_feature_names = feature_selection.select_frame(frame_feature_names)
-        if not box_feature_names:
-            box_feature_names = reg.per_box_feature_names(record)
-            if feature_selection:
-                box_feature_names = feature_selection.select_box(box_feature_names)
+    frame_feature_names = reg.frame_feature_names()
+    box_feature_names = reg.per_box_schema_feature_names()
+    if feature_selection:
+        frame_feature_names = feature_selection.select_frame(frame_feature_names)
+        box_feature_names = feature_selection.select_box(box_feature_names)
+        reg = reg.select_extractors_for_features(
+            frame_feature_names=frame_feature_names,
+            box_feature_names=box_feature_names,
+        )
 
+    for record_index, record in enumerate(records, start=1):
         frames = record.frames()
         frame_index = record.frame_index()
         logger.info(
@@ -192,18 +194,19 @@ def build_dataset(
             ctx = FeatureContext.from_record(record, frame, frame_index=frame_index)
             label = record.labels.label_for(frame.frame_idx)
             target_side, target_layer_norm, target_col_norm = _layout_target_from_label(record, label)
-            frame_feat = reg.extract_frame_features_from_context(ctx)
-            frame_samples.append(
-                FrameSample(
-                    record_id=record.record_id,
-                    frame_idx=frame.frame_idx,
-                    x=frame_feat.to_vector(frame_feature_names),
-                    is_picking=label.is_picking,
-                    target_layout_shelf_side=target_side if label.is_picking else 0,
-                    target_layout_layer_norm=target_layer_norm if label.is_picking else 0.0,
-                    target_layout_column_norm=target_col_norm if label.is_picking else 0.0,
+            for frame_feat in reg.extract_frame_feature_groups_from_context(ctx):
+                frame_samples.append(
+                    FrameSample(
+                        record_id=record.record_id,
+                        frame_idx=frame.frame_idx,
+                        person_track_id=frame_feat.person_track_id,
+                        x=frame_feat.to_vector(frame_feature_names),
+                        is_picking=label.is_picking,
+                        target_layout_shelf_side=target_side if label.is_picking else 0,
+                        target_layout_layer_norm=target_layer_norm if label.is_picking else 0.0,
+                        target_layout_column_norm=target_col_norm if label.is_picking else 0.0,
+                    )
                 )
-            )
 
             if label.is_picking:
                 confirmed_codes = set(label.confirmed_box_codes)

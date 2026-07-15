@@ -11,8 +11,9 @@ from typing import Any
 from loguru import logger
 
 from analysis.box_layout import normalized_layout_targets
+from analysis.features.base import FeatureContext
 from analysis.features.registry import default_registry
-from analysis.models import PickingModel, SklearnPickingModel
+from analysis.models import PickingModel, PickingPrediction, SklearnPickingModel
 from analysis.records import FramePersons, RecordData, load_all_records
 
 
@@ -166,13 +167,21 @@ def predict_record(
     results: list[dict[str, Any]] = []
 
     for frame in frames if frames is not None else record.frames():
-        frame_feat = reg.extract_frame_features(record, frame)
-        x = frame_feat.to_vector(model.frame_feature_names)
-        pred = model.predict_frame(
-            x,
+        ctx = FeatureContext.from_record(record, frame)
+        preds = [
+            model.predict_frame(
+                group.to_vector(model.frame_feature_names),
+                record_id=record.record_id,
+                frame_idx=frame.frame_idx,
+                box_layout=record.box_layout,
+            )
+            for group in reg.extract_frame_feature_groups_from_context(ctx)
+        ]
+        pred = max(preds, key=lambda p: p.picking_prob) if preds else PickingPrediction(
             record_id=record.record_id,
             frame_idx=frame.frame_idx,
-            box_layout=record.box_layout,
+            is_picking=False,
+            picking_prob=0.0,
         )
 
         results.append(

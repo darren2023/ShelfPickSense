@@ -6,6 +6,7 @@ from analysis.features.base import FeatureContext, FeatureExtractor
 from analysis.features.spatial import wrist_hit_box_for_person
 from analysis.features.tracking import (
     CONSECUTIVE_HIT_WINDOWS,
+    FOOT_MOVE_OFFSETS,
     HAND_MOVE_OFFSETS,
     LEFT_WRIST,
     MAX_PERSON_SLOTS,
@@ -44,6 +45,25 @@ def _person_hits_any_box(person: dict, ctx: FeatureContext) -> bool:
 
 class TemporalFeatureExtractor(FeatureExtractor):
     name = "temporal"
+
+    def frame_feature_names(self) -> list[str]:
+        names: list[str] = []
+        for window in CONSECUTIVE_HIT_WINDOWS:
+            names.append(f"consecutive_hit_{window}")
+        for offset in HAND_MOVE_OFFSETS:
+            names.extend([f"left_wrist_move_{offset}", f"right_wrist_move_{offset}"])
+        names.extend(_foot_feature_names())
+        for slot in range(MAX_PERSON_SLOTS):
+            prefix = f"p{slot}"
+            names.extend([f"{prefix}_track_id", f"{prefix}_present"])
+            for window in CONSECUTIVE_HIT_WINDOWS:
+                names.append(f"{prefix}_consecutive_hit_{window}")
+            for offset in HAND_MOVE_OFFSETS:
+                names.extend([f"{prefix}_left_wrist_move_{offset}", f"{prefix}_right_wrist_move_{offset}"])
+            names.extend(_foot_feature_names(prefix=prefix))
+        for window in CONSECUTIVE_HIT_WINDOWS:
+            names.append(f"any_track_consecutive_hit_{window}")
+        return names
 
     def extract_frame(self, ctx: FeatureContext) -> dict[str, float]:
         out: dict[str, float] = {}
@@ -93,3 +113,20 @@ class TemporalFeatureExtractor(FeatureExtractor):
             out[f"any_track_consecutive_hit_{window}"] = 1.0 if max_streak >= window else 0.0
 
         return out
+
+
+def _foot_feature_names(prefix: str = "") -> list[str]:
+    key_prefix = f"{prefix}_" if prefix else ""
+    names: list[str] = []
+    for label in ("left_foot", "right_foot", "foot_avg"):
+        names.extend([f"{key_prefix}{label}_x_norm", f"{key_prefix}{label}_y_norm"])
+    for offset in FOOT_MOVE_OFFSETS:
+        for foot in ("left_foot", "right_foot", "foot_avg"):
+            names.extend(
+                [
+                    f"{key_prefix}{foot}_dx_{offset}",
+                    f"{key_prefix}{foot}_dy_{offset}",
+                    f"{key_prefix}{foot}_dist_{offset}",
+                ]
+            )
+    return names

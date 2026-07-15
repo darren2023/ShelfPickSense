@@ -26,6 +26,32 @@ def test_feature_selection_none_uses_all():
     assert selection.select_box(available) == available
 
 
+def test_feature_selection_expands_feature_groups():
+    selection = FeatureSelection(
+        frame_features=["skeleton", "rule.window_hit_3_6", "skeleton.person_count"],
+        box_features=["layout"],
+    )
+    assert selection.select_frame(
+        [
+            "rule.window_hit_3_6",
+            "skeleton.person_count",
+            "skeleton.left_wrist_x_norm",
+            "spatial.any_wrist_inside_box",
+        ]
+    ) == [
+        "skeleton.person_count",
+        "skeleton.left_wrist_x_norm",
+        "rule.window_hit_3_6",
+    ]
+    assert selection.select_box(
+        [
+            "layout.layout_layer",
+            "layout.layout_column",
+            "spatial.wrist_inside",
+        ]
+    ) == ["layout.layout_layer", "layout.layout_column"]
+
+
 def test_feature_selection_rejects_unknown_names():
     selection = FeatureSelection(frame_features=["missing"])
     with pytest.raises(ValueError, match="frame_features 包含未知特征"):

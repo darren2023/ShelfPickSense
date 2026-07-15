@@ -609,21 +609,31 @@ def _write_jsonl(path: Path, rows: list[dict]) -> None:
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
+def _default_export_output_dir(data_dir: Path) -> Path:
+    from analysis.records import is_record_dir
+
+    data_dir = Path(data_dir)
+    if is_record_dir(data_dir):
+        return data_dir
+    return data_dir / "features"
+
+
 def _cmd_export_features(args: argparse.Namespace) -> int:
     import pandas as pd
 
     from analysis.dataset import load_dataset
 
+    data_dir = Path(args.data_dir)
+    out_dir = Path(args.output) if args.output else _default_export_output_dir(data_dir)
     logger.info(
         "开始提取特征: data_dir={}, output={}, format={}, feature_config={}",
-        args.data_dir,
-        args.output,
+        data_dir,
+        out_dir,
         args.format,
         args.feature_config or "",
     )
     feature_selection = load_feature_selection(args.feature_config)
-    dataset = load_dataset(Path(args.data_dir), feature_selection=feature_selection)
-    out_dir = Path(args.output)
+    dataset = load_dataset(data_dir, feature_selection=feature_selection)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     frame_rows = []
@@ -631,6 +641,7 @@ def _cmd_export_features(args: argparse.Namespace) -> int:
         row = {
             "record_id": sample.record_id,
             "frame_idx": sample.frame_idx,
+            "person_track_id": sample.person_track_id,
             "is_picking": sample.is_picking,
             "target_layout_shelf_side": sample.target_layout_shelf_side,
             "target_layout_layer_norm": sample.target_layout_layer_norm,
@@ -680,7 +691,7 @@ def _cmd_export_features(args: argparse.Namespace) -> int:
     primary_format = formats[0]
 
     meta = {
-        "data_dir": str(Path(args.data_dir)),
+        "data_dir": str(data_dir),
         "output_dir": str(out_dir),
         "output_format": args.format,
         "output_files": output_files,
@@ -1033,10 +1044,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_export = sub.add_parser("export-features", help="从记录提取特征并保存到文件")
     p_export.add_argument("--data-dir", required=True, help="数据目录（含多条记录或单条记录）")
-    p_export.add_argument("--output", required=True, help="特征输出目录")
+    p_export.add_argument(
+        "--output",
+        default="",
+        help="特征输出目录；默认单记录输出到该 record 目录，多记录父目录输出到其 features 子目录",
+    )
     p_export.add_argument(
         "--format",
-        default="parquet",
+        default="csv",
         choices=["parquet", "csv", "jsonl", "all"],
         help="特征文件格式（默认 parquet；可选 csv/jsonl/all）",
     )

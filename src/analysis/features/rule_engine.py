@@ -242,6 +242,43 @@ class RuleEngineFeatureExtractor(FeatureExtractor):
     def __init__(self, params: RuleEngineParams | None = None) -> None:
         self.params = params or RuleEngineParams()
 
+    def frame_feature_names(self) -> list[str]:
+        names = [
+            "any_collision",
+            "collision_count",
+            "primary_any_collision",
+            "primary_collision_count",
+        ]
+        for min_hits, window in RULE_WINDOW_PAIRS:
+            names.extend([f"window_hit_{min_hits}_{window}", f"window_hits_{window}"])
+        for slot in range(MAX_PERSON_SLOTS):
+            prefix = f"p{slot}"
+            names.extend(
+                [
+                    f"{prefix}_present",
+                    f"{prefix}_track_id",
+                    f"{prefix}_any_collision",
+                    f"{prefix}_collision_count",
+                ]
+            )
+            for min_hits, window in RULE_WINDOW_PAIRS:
+                names.append(f"{prefix}_window_hit_{min_hits}_{window}")
+        names.append(f"any_track_window_hit_{self.params.min_consecutive_frames}_{self.params.window_frames}")
+        return names
+
+    def per_box_feature_names(self) -> list[str]:
+        names = [
+            "frame_collision",
+            "wrist_collision",
+            "forearm_collision",
+            "hand_collision",
+            "max_signed_dist_norm",
+            "nearest_collision",
+        ]
+        for min_hits, window in RULE_WINDOW_PAIRS:
+            names.extend([f"window_hit_{min_hits}_{window}", f"window_hits_{window}"])
+        return names
+
     def extract_frame(self, ctx: FeatureContext) -> dict[str, float]:
         params = self.params
         active_tokens = rule_collision_tokens_for_frame(ctx, params)

@@ -137,6 +137,54 @@ def _box_centroid(polygon: tuple[tuple[float, float], ...]) -> tuple[float, floa
 class BoxSpatialFeatureExtractor(FeatureExtractor):
     name = "spatial"
 
+    def frame_feature_names(self) -> list[str]:
+        names: list[str] = []
+        for side in (LEFT_WRIST, RIGHT_WRIST, LEFT_FOOT, RIGHT_FOOT):
+            names.extend(
+                [
+                    f"primary_{side}_min_box_dist_norm",
+                    f"primary_{side}_inside_any_box",
+                ]
+            )
+        for slot in range(MAX_PERSON_SLOTS):
+            prefix = f"p{slot}"
+            names.extend([f"{prefix}_track_id", f"{prefix}_present"])
+            for side in (LEFT_WRIST, RIGHT_WRIST, LEFT_FOOT, RIGHT_FOOT):
+                names.extend(
+                    [
+                        f"{prefix}_{side}_min_box_dist_norm",
+                        f"{prefix}_{side}_inside_any_box",
+                    ]
+                )
+        names.extend(
+            [
+                "min_wrist_box_dist_norm",
+                "any_wrist_inside_box",
+                "boxes_with_wrist_inside",
+                "min_foot_box_dist_norm",
+                "any_foot_inside_box",
+                "boxes_with_foot_inside",
+            ]
+        )
+        return names
+
+    def per_box_feature_names(self) -> list[str]:
+        names: list[str] = []
+        for prefix in ("left_wrist", "right_wrist", "left_foot", "right_foot"):
+            names.extend([f"{prefix}_dist_norm", f"{prefix}_inside"])
+        names.extend(
+            [
+                "wrist_min_dist_norm",
+                "wrist_inside",
+                "wrist_mean_dist_norm",
+                "centroid_dist_norm",
+                "foot_min_dist_norm",
+                "foot_inside",
+                "foot_mean_dist_norm",
+            ]
+        )
+        return names
+
     def extract_frame(self, ctx: FeatureContext) -> dict[str, float]:
         scale = max(ctx.record.infer_width, ctx.record.infer_height, 1.0)
         out: dict[str, float] = {}

@@ -21,6 +21,8 @@ class FeatureContext:
     box_index: dict[str, BoxInfo]
     box_tokens: list[str]
     frame_index: dict[int, FramePersons] = field(default_factory=dict)
+    current_person: dict[str, Any] | None = None
+    current_track_id: int | None = None
     _rule_hit_cache: dict[tuple[int | None, int, str | None], int] = field(
         default_factory=dict, repr=False, compare=False
     )
@@ -56,6 +58,21 @@ class FeatureContext:
             frame_index=idx,
         )
 
+    def for_person(self, person: dict[str, Any], track_id: int | None) -> "FeatureContext":
+        return FeatureContext(
+            record=self.record,
+            frame=FramePersons(
+                frame_idx=self.frame.frame_idx,
+                timestamp_sec=self.frame.timestamp_sec,
+                persons=[person],
+            ),
+            box_index=self.box_index,
+            box_tokens=self.box_tokens,
+            frame_index=self.frame_index,
+            current_person=person,
+            current_track_id=track_id,
+        )
+
 
 @dataclass
 class FeatureSet:
@@ -63,6 +80,7 @@ class FeatureSet:
 
     record_id: str
     frame_idx: int
+    person_track_id: int | None = None
     features: dict[str, float] = field(default_factory=dict)
 
     def names(self) -> list[str]:
@@ -95,6 +113,14 @@ class FeatureExtractor(ABC):
     def extract_frame(self, ctx: FeatureContext) -> dict[str, float]:
         """提取帧级（全局）特征。"""
 
+    def frame_feature_names(self) -> list[str]:
+        """返回该提取器稳定输出的帧级特征名（不含提取器前缀）。"""
+        return []
+
     def extract_per_box(self, ctx: FeatureContext) -> dict[str, dict[str, float]]:
         """提取每货框特征，默认无。"""
         return {}
+
+    def per_box_feature_names(self) -> list[str]:
+        """返回该提取器稳定输出的货框级特征名（不含提取器前缀）。"""
+        return []

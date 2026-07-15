@@ -68,7 +68,8 @@ def test_feature_registry_extensible(fixture_data_dir: Path):
     reg.register(DummyExtractor())
     record = load_record(fixture_data_dir)
     frame = record.frames()[0]
-    feat = reg.extract_frame_features(record, frame)
+    ctx = FeatureContext.from_record(record, frame, frame_index=record.frame_index())
+    feat = reg.extract_frame_feature_groups_from_context(ctx)[0]
     assert "dummy.value" in feat.features
 
 
@@ -318,6 +319,28 @@ def test_cli_export_features(fixture_data_dir: Path, tmp_path: Path):
     assert "layout.shelf_column_count_mean" in box_df.columns
 
 
+def test_cli_export_features_defaults_output_to_record_dir(fixture_data_dir: Path):
+    import json
+
+    from analysis.cli import main
+
+    ret = main(
+        [
+            "export-features",
+            "--data-dir",
+            str(fixture_data_dir),
+        ]
+    )
+
+    assert ret == 0
+    assert (fixture_data_dir / "frame_features.parquet").is_file()
+    assert (fixture_data_dir / "box_features.parquet").is_file()
+    meta_path = fixture_data_dir / "features_meta.json"
+    assert meta_path.is_file()
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    assert meta["output_dir"] == str(fixture_data_dir)
+
+
 def test_cli_feature_config_filters_export_and_train(fixture_data_dir: Path, tmp_path: Path):
     import json
 
@@ -384,6 +407,53 @@ def test_cli_feature_config_filters_export_and_train(fixture_data_dir: Path, tmp
     model_meta = json.loads((model_dir / "meta.json").read_text(encoding="utf-8"))
     assert model_meta["frame_feature_names"] == selected_frame
     assert model_meta["box_feature_names"] == selected_box
+
+
+def test_cli_feature_config_expands_feature_groups(fixture_data_dir: Path, tmp_path: Path):
+    import json
+
+    import pandas as pd
+
+    from analysis.cli import main
+
+    config_path = tmp_path / "feature_groups.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "frame_features": ["skeleton"],
+                "box_features": ["layout"],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    features_dir = tmp_path / "group_features"
+    ret = main(
+        [
+            "export-features",
+            "--data-dir",
+            str(fixture_data_dir),
+            "--output",
+            str(features_dir),
+            "--format",
+            "csv",
+            "--feature-config",
+            str(config_path),
+        ]
+    )
+
+    assert ret == 0
+    meta = json.loads((features_dir / "features_meta.json").read_text(encoding="utf-8"))
+    assert meta["frame_feature_names"]
+    assert all(name.startswith("skeleton.") for name in meta["frame_feature_names"])
+    assert meta["box_feature_names"]
+    assert all(name.startswith("layout.") for name in meta["box_feature_names"])
+
+    frame_df = pd.read_csv(features_dir / "frame_features.csv")
+    feature_columns = set(meta["frame_feature_names"])
+    assert feature_columns <= set(frame_df.columns)
+    assert "spatial.any_wrist_inside_box" not in frame_df.columns
 
 
 def test_cli_export_features_all_formats(fixture_data_dir: Path, tmp_path: Path):

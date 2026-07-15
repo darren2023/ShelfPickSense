@@ -14,6 +14,14 @@ def fixture_data_dir(tmp_path: Path) -> Path:
     return make_fixture_record(tmp_path / "record_001")
 
 
+def _first_frame_group(reg, record, frame):
+    from analysis.features.base import FeatureContext
+
+    return reg.extract_frame_feature_groups_from_context(
+        FeatureContext.from_record(record, frame, frame_index=record.frame_index())
+    )[0]
+
+
 def test_layout_features_on_picking_frame(fixture_data_dir: Path):
     from analysis.features.registry import default_registry
     from analysis.records import load_record
@@ -63,11 +71,62 @@ def test_spatial_wrist_and_foot_distance(fixture_data_dir: Path):
     assert a1.features["spatial.left_wrist_inside"] == pytest.approx(1.0)
     assert a1.features["spatial.foot_min_dist_norm"] == pytest.approx(1.0)
 
-    frame_feat = reg.extract_frame_features(record, frame)
+    frame_feat = _first_frame_group(reg, record, frame)
     assert frame_feat.features["spatial.p0_present"] == pytest.approx(1.0)
     assert frame_feat.features["spatial.p0_track_id"] == pytest.approx(1.0)
     assert frame_feat.features["spatial.p0_left_wrist_min_box_dist_norm"] == pytest.approx(0.0)
     assert frame_feat.features["spatial.p0_left_foot_min_box_dist_norm"] == pytest.approx(1.0)
+
+
+def test_frame_feature_groups_are_not_merged_into_default_frame_features():
+    import pandas as pd
+
+    from analysis.constants import LEFT_WRIST_IDX, RIGHT_WRIST_IDX
+    from analysis.features.base import FeatureContext
+    from analysis.features.registry import default_registry
+    from analysis.records import FramePersons, RecordData
+
+    def _person(track_id: int, left: tuple[float, float], right: tuple[float, float]) -> dict:
+        keypoints: list[list[float | None]] = [[None, None, None] for _ in range(17)]
+        keypoints[LEFT_WRIST_IDX] = [left[0], left[1], 0.9]
+        keypoints[RIGHT_WRIST_IDX] = [right[0], right[1], 0.8]
+        return {"person_track_id": track_id, "keypoints": keypoints}
+
+    record = RecordData(
+        record_id="multi_person",
+        record_dir=Path("."),
+        skeleton=pd.DataFrame(),
+        annotation={},
+        event_review=None,
+        labels=__import__("analysis.labels", fromlist=["RecordLabels"]).RecordLabels(record_id="multi_person"),
+        infer_width=640.0,
+        infer_height=480.0,
+        box_tokens=[],
+    )
+    frame = FramePersons(
+        frame_idx=1,
+        timestamp_sec=0.0,
+        persons=[
+            _person(2, (200.0, 100.0), (240.0, 100.0)),
+            _person(1, (100.0, 100.0), (140.0, 100.0)),
+        ],
+    )
+
+    reg = default_registry()
+    groups = reg.extract_frame_feature_groups_from_context(FeatureContext.from_record(record, frame))
+
+    assert len(groups) == 2
+    assert "skeleton.infer_width" not in groups[0].features
+    assert "skeleton.infer_height" not in groups[0].features
+    assert not any(name.startswith("person") for name in groups[0].features)
+    assert groups[0].person_track_id == 1
+    assert groups[1].person_track_id == 2
+    assert "track_id" not in groups[0].features
+    assert "track_id" not in groups[1].features
+    assert groups[0].features["skeleton.person_count"] == pytest.approx(1.0)
+    assert groups[1].features["skeleton.person_count"] == pytest.approx(1.0)
+    assert groups[0].features["skeleton.left_wrist_x_norm"] == pytest.approx(100.0 / 640.0)
+    assert groups[1].features["skeleton.left_wrist_x_norm"] == pytest.approx(200.0 / 640.0)
 
 
 def test_foot_temporal_movement_features():
@@ -107,7 +166,7 @@ def test_foot_temporal_movement_features():
         frame_index=frames,
     )
     reg = default_registry()
-    feat = reg.extract_frame_features_from_context(ctx).features
+    feat = reg.extract_frame_feature_groups_from_context(ctx)[0].features
 
     assert feat["temporal.left_foot_x_norm"] == pytest.approx(160.0 / 640.0)
     assert feat["temporal.foot_avg_x_norm"] == pytest.approx(180.0 / 640.0)
@@ -128,12 +187,12 @@ def test_temporal_consecutive_hit_and_hand_move(fixture_data_dir: Path):
     frame6 = next(f for f in record.frames() if f.frame_idx == 6)
     frame8 = next(f for f in record.frames() if f.frame_idx == 8)
 
-    feat6 = reg.extract_frame_features(record, frame6)
+    feat6 = _first_frame_group(reg, record, frame6)
     assert feat6.features["temporal.consecutive_hit_3"] == pytest.approx(0.0)
     assert feat6.features["temporal.left_wrist_move_1"] >= 0.0
     assert feat6.features["temporal.right_wrist_move_1"] >= 0.0
 
-    feat8 = reg.extract_frame_features(record, frame8)
+    feat8 = _first_frame_group(reg, record, frame8)
     assert feat8.features["temporal.consecutive_hit_3"] == pytest.approx(1.0)
     assert feat8.features["temporal.consecutive_hit_5"] == pytest.approx(0.0)
     assert feat8.features["temporal.p0_consecutive_hit_3"] == pytest.approx(1.0)
@@ -146,7 +205,7 @@ def test_track_id_matches_across_frames(fixture_data_dir: Path):
     record = load_record(fixture_data_dir)
     reg = default_registry()
     frame7 = next(f for f in record.frames() if f.frame_idx == 7)
-    feat7 = reg.extract_frame_features(record, frame7)
+    feat7 = _first_frame_group(reg, record, frame7)
     assert feat7.features["temporal.left_wrist_move_1"] == pytest.approx(0.0)
     assert feat7.features["temporal.right_wrist_move_1"] == pytest.approx(0.0)
 
@@ -182,7 +241,7 @@ def test_rule_engine_collision_and_window_features(fixture_data_dir: Path):
     frame6 = next(f for f in record.frames() if f.frame_idx == 6)
     frame8 = next(f for f in record.frames() if f.frame_idx == 8)
 
-    feat6 = reg.extract_frame_features(record, frame6)
+    feat6 = _first_frame_group(reg, record, frame6)
     assert feat6.features["rule.any_collision"] == pytest.approx(1.0)
     assert feat6.features["rule.primary_any_collision"] == pytest.approx(1.0)
     assert feat6.features["rule.window_hit_3_6"] == pytest.approx(0.0)
@@ -193,7 +252,7 @@ def test_rule_engine_collision_and_window_features(fixture_data_dir: Path):
     assert a1.features["rule.wrist_collision"] == pytest.approx(1.0)
     assert a1.features["rule.frame_collision"] == pytest.approx(1.0)
 
-    feat8 = reg.extract_frame_features(record, frame8)
+    feat8 = _first_frame_group(reg, record, frame8)
     assert feat8.features["rule.window_hit_3_6"] == pytest.approx(1.0)
     assert feat8.features["rule.window_hits_6"] >= 3.0
 
@@ -253,6 +312,6 @@ def test_cross_frame_features_without_track_id(tmp_path: Path):
     assert move == pytest.approx(0.0)
 
     reg = default_registry()
-    feat8 = reg.extract_frame_features(record, frames[8])
+    feat8 = _first_frame_group(reg, record, frames[8])
     assert feat8.features["temporal.consecutive_hit_3"] == pytest.approx(1.0)
     assert feat8.features["rule.window_hit_3_6"] == pytest.approx(1.0)

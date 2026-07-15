@@ -34,10 +34,21 @@ def _select_names(available: list[str], selected: list[str] | None, key: str) ->
     if selected is None:
         return list(available)
     available_set = set(available)
-    missing = [name for name in selected if name not in available_set]
+    out: list[str] = []
+    missing: list[str] = []
+    for name in selected:
+        if name in available_set:
+            out.append(name)
+            continue
+        prefix = f"{name}."
+        matches = [available_name for available_name in available if available_name.startswith(prefix)]
+        if matches:
+            out.extend(matches)
+            continue
+        missing.append(name)
     if missing:
         raise ValueError(f"{key} 包含未知特征: {', '.join(missing)}")
-    return list(selected)
+    return list(dict.fromkeys(out))
 
 
 def _optional_name_list(data: dict[str, Any], *keys: str) -> list[str] | None:

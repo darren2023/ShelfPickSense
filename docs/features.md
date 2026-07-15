@@ -50,8 +50,6 @@ p0, p1, p2
 | 特征 | 含义 |
 | --- | --- |
 | `skeleton.person_count` | 当前帧检测到的人数。 |
-| `skeleton.infer_width` | 骨架/推理坐标系宽度。 |
-| `skeleton.infer_height` | 骨架/推理坐标系高度。 |
 | `skeleton.wrist_min_score` | 最佳人物左右手腕置信度中的较小值。最佳人物按该值最大者选择。 |
 | `skeleton.left_wrist_x_norm` / `skeleton.left_wrist_y_norm` | 最佳人物左手腕坐标，分别除以 `infer_width` / `infer_height`。 |
 | `skeleton.right_wrist_x_norm` / `skeleton.right_wrist_y_norm` | 最佳人物右手腕坐标，分别除以 `infer_width` / `infer_height`。 |
@@ -290,6 +288,17 @@ window_hits_6, window_hits_7
 }
 ```
 
+列表项既可以写完整特征名，也可以写提取器类别名前缀。类别名会展开为当前可用的全部同类特征，例如：
+
+```json
+{
+  "frame_features": ["skeleton", "temporal.consecutive_hit_3"],
+  "box_features": ["layout", "rule"]
+}
+```
+
+其中 `skeleton` 会匹配所有 `skeleton.*` 帧级特征，`layout` 会匹配所有 `layout.*` 货框级特征。类别项和完整特征名可以混用，重复项会自动去重。
+
 使用方式：
 
 ```bash
@@ -307,4 +316,3 @@ uv run python main.py train \
 - `rule` 是软边界规则特征，适合复用规则基线的碰撞语义，通常比 `spatial` 更宽松。
 - `temporal` 适合识别取货动作的持续性和运动趋势，但依赖跨帧关联；没有稳定 track 时会使用肩点锚点做有限回退。
 - `layout` 适合货框分类阶段，帮助模型学习目标货框的货架位置先验。
-- `skeleton.infer_width` / `skeleton.infer_height` 是记录级尺寸信息，在同一数据源内通常变化很小；做特征筛选时可结合相关性分析判断是否保留。

@@ -82,20 +82,21 @@ models/rf/
 
 ```bash
 uv run python main.py export-features \
-  --data-dir data/demo \
-  --output outputs/features
+  --data-dir data/demo
 ```
 
 输出：
 
 ```text
-outputs/features/
+data/demo/
   frame_features.parquet
   box_features.parquet
   features_meta.json
 ```
 
-`frame_features.parquet` 包含 `record_id`、`frame_idx`、`is_picking`、`confirmed_box_tokens` 和帧级特征列。
+未指定 `--output` 时，如果 `--data-dir` 是单条记录目录，特征文件会直接写入该 record 目录；如果 `--data-dir` 是多记录父目录，默认写入其 `features/` 子目录。需要单独指定输出目录时仍可传入 `--output`。
+
+`frame_features.parquet` 包含 `record_id`、`frame_idx`、`person_track_id`、`is_picking` 和帧级特征列。
 `box_features.parquet` 包含 `record_id`、`frame_idx`、`box_token`、`is_target` 和货框级特征列。
 `features_meta.json` 保存特征名列表、样本数量和输出路径。
 
@@ -122,15 +123,18 @@ uv run python main.py export-features \
 ```json
 {
   "frame_features": [
-    "skeleton.person_count",
+    "skeleton",
     "spatial.any_wrist_inside_box"
   ],
   "box_features": [
+    "layout",
     "spatial.wrist_min_dist_norm",
     "spatial.wrist_inside"
   ]
 }
 ```
+
+`frame_features` / `box_features` 中既可以写完整特征名，也可以写类别名前缀。比如 `skeleton` 会展开为所有 `skeleton.*` 帧级特征，`layout` 会展开为所有 `layout.*` 货框级特征。
 
 在导出、训练、benchmark 和从原始记录分析特征时传入：
 

@@ -41,12 +41,23 @@ def _person_anchor(keypoints: list) -> tuple[float, float]:
 class SkeletonFeatureExtractor(FeatureExtractor):
     name = "skeleton"
 
+    def frame_feature_names(self) -> list[str]:
+        return [
+            "person_count",
+            "wrist_min_score",
+            "left_wrist_x_norm",
+            "left_wrist_y_norm",
+            "right_wrist_x_norm",
+            "right_wrist_y_norm",
+            "wrist_spread",
+            "anchor_x_norm",
+            "anchor_y_norm",
+        ]
+
     def extract_frame(self, ctx: FeatureContext) -> dict[str, float]:
         persons = ctx.frame.persons
         out: dict[str, float] = {
             "person_count": float(len(persons)),
-            "infer_width": float(ctx.record.infer_width),
-            "infer_height": float(ctx.record.infer_height),
         }
         if not persons:
             out.update(

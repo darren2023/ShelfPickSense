@@ -21,7 +21,7 @@ from analysis.box_layout import build_box_layout, compute_shelf_layout_stats
 from analysis.features.base import FeatureContext
 from analysis.features.registry import FeatureRegistry, default_registry
 from analysis.labels import RecordLabels
-from analysis.models import SklearnPickingModel
+from analysis.models import PickingPrediction, SklearnPickingModel
 from analysis.records import FramePersons, RecordData
 
 
@@ -187,13 +187,20 @@ class RealtimePickingPredictor:
             box_tokens=self.box_tokens,
             frame_index=self._frame_history,
         )
-        frame_features = self.registry.extract_frame_features_from_context(ctx)
-        x = frame_features.to_vector(self.model.frame_feature_names)
-        pred = self.model.predict_frame(
-            x,
+        preds = [
+            self.model.predict_frame(
+                group.to_vector(self.model.frame_feature_names),
+                record_id=self.record.record_id,
+                frame_idx=frame_data.frame_idx,
+                box_layout=self.record.box_layout,
+            )
+            for group in self.registry.extract_frame_feature_groups_from_context(ctx)
+        ]
+        pred = max(preds, key=lambda p: p.picking_prob) if preds else PickingPrediction(
             record_id=self.record.record_id,
             frame_idx=frame_data.frame_idx,
-            box_layout=self.record.box_layout,
+            is_picking=False,
+            picking_prob=0.0,
         )
 
         return RealtimePrediction(
