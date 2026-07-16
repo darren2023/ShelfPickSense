@@ -44,6 +44,7 @@ class FeatureBenchmarkPlan:
     eval_data_dir: Path | None = None
     model_names: list[str] = field(default_factory=lambda: list(DEFAULT_MODEL_NAMES))
     jobs: int = 8
+    feature_frame_stride: int = 1
     sets: list[FeatureBenchmarkSetSpec] = field(default_factory=list)
     source_path: str = ""
 
@@ -74,6 +75,7 @@ class FeatureBenchmarkBatchResult:
     eval_data_dir: str
     output_dir: str
     model_names: list[str]
+    feature_frame_stride: int
     sets: list[FeatureBenchmarkSetResult]
     benchmarked_at: str
     report_path: str
@@ -85,6 +87,7 @@ class FeatureBenchmarkBatchResult:
             "eval_data_dir": self.eval_data_dir,
             "output_dir": self.output_dir,
             "model_names": self.model_names,
+            "feature_frame_stride": self.feature_frame_stride,
             "sets": [item.to_dict() for item in self.sets],
             "benchmarked_at": self.benchmarked_at,
             "report_path": self.report_path,
@@ -159,6 +162,7 @@ def _plan_to_dict(
         "output_dir": str(plan.output_dir.resolve()),
         "models": list(plan.model_names),
         "jobs": int(plan.jobs),
+        "feature_frame_stride": int(plan.feature_frame_stride),
         "feature_sets": [_set_spec_to_dict(spec) for spec in plan.sets],
     }
     if run_output_dir is not None:
@@ -193,6 +197,7 @@ def _feature_cache_signature(
     *,
     train_data_dir: Path,
     feature_selection: FeatureSelection | None,
+    feature_frame_stride: int,
 ) -> dict[str, Any]:
     record_dirs = discover_record_dirs(train_data_dir)
     records = []
@@ -206,9 +211,10 @@ def _feature_cache_signature(
             }
         )
     return {
-        "version": 1,
+        "version": 2,
         "train_data_dir": str(Path(train_data_dir).resolve()),
         "feature_selection": feature_selection.to_dict() if feature_selection else None,
+        "feature_frame_stride": max(1, int(feature_frame_stride or 1)),
         "records": records,
     }
 
@@ -219,10 +225,12 @@ def _feature_cache_path(
     set_name: str,
     train_data_dir: Path,
     feature_selection: FeatureSelection | None,
+    feature_frame_stride: int,
 ) -> Path:
     signature = _feature_cache_signature(
         train_data_dir=train_data_dir,
         feature_selection=feature_selection,
+        feature_frame_stride=feature_frame_stride,
     )
     digest = hashlib.sha256(
         json.dumps(signature, ensure_ascii=False, sort_keys=True).encode("utf-8")
@@ -275,6 +283,7 @@ def load_feature_benchmark_plan(path: str | Path) -> FeatureBenchmarkPlan:
         output_dir=Path(output_dir),
         model_names=list(model_names or DEFAULT_MODEL_NAMES),
         jobs=int(data.get("jobs") or 8),
+        feature_frame_stride=max(1, int(data.get("feature_frame_stride") or data.get("frame_stride") or 1)),
         sets=[_parse_set_spec(item, index) for index, item in enumerate(raw_sets)],
         source_path=str(config_path.resolve()),
     )
@@ -400,6 +409,7 @@ def _write_batch_report(batch: FeatureBenchmarkBatchResult, output_dir: Path) ->
         f"- 评测目录：`{batch.eval_data_dir}`",
         f"- 输出目录：`{batch.output_dir}`",
         f"- 参与模型：`{', '.join(batch.model_names)}`",
+        f"- 特征帧采样间隔：`{batch.feature_frame_stride}`",
         f"- 特征配置组数：`{len(batch.sets)}`",
         "",
         "## 各特征配置最佳模型汇总",
@@ -505,6 +515,7 @@ def _benchmark_result_from_dict(data: dict[str, Any]) -> BenchmarkResult:
         feature_cache_path=str(data.get("feature_cache_path") or ""),
         feature_cache_hit=bool(data.get("feature_cache_hit") or False),
         feature_dataset_seconds=float(data.get("feature_dataset_seconds") or 0.0),
+        feature_frame_stride=int(data.get("feature_frame_stride") or 1),
     )
 
 
@@ -534,6 +545,7 @@ def load_feature_benchmark_batch_result(output_dir: Path) -> FeatureBenchmarkBat
         eval_data_dir=str(data.get("eval_data_dir") or ""),
         output_dir=str(Path(output_dir).resolve()),
         model_names=list(data.get("model_names") or []),
+        feature_frame_stride=int(data.get("feature_frame_stride") or 1),
         sets=sets,
         benchmarked_at=str(data.get("benchmarked_at") or ""),
         report_path=str(data.get("report_path") or ""),
@@ -569,6 +581,7 @@ def _load_batch_result_from_plan(plan: FeatureBenchmarkPlan) -> FeatureBenchmark
         eval_data_dir=str(eval_data_dir.resolve()),
         output_dir=str(output_dir.resolve()),
         model_names=list(plan.model_names),
+        feature_frame_stride=max(1, int(plan.feature_frame_stride or 1)),
         sets=set_results,
         benchmarked_at=datetime.now(timezone.utc).isoformat(),
         report_path="",
@@ -604,6 +617,7 @@ def run_feature_benchmarks(plan: FeatureBenchmarkPlan) -> FeatureBenchmarkBatchR
     plan_path = _write_resolved_plan(plan, output_dir)
     base_dir = Path(plan.source_path).parent if plan.source_path else Path.cwd()
     eval_data_dir = plan.eval_data_dir or plan.train_data_dir
+    feature_frame_stride = max(1, int(plan.feature_frame_stride or 1))
     logger.info("多特征 benchmark 运行配置已保存: {}", plan_path)
     eval_records = load_all_records(eval_data_dir)
     baseline_predictions_filename = prediction_filename_for_records(eval_records)
@@ -629,6 +643,7 @@ def run_feature_benchmarks(plan: FeatureBenchmarkPlan) -> FeatureBenchmarkBatchR
             set_name=spec.name,
             train_data_dir=plan.train_data_dir,
             feature_selection=feature_selection,
+            feature_frame_stride=feature_frame_stride,
         )
         logger.info(
             "开始特征配置 benchmark: name={}, output={}, feature_config={}, feature_cache={}",
@@ -646,6 +661,7 @@ def run_feature_benchmarks(plan: FeatureBenchmarkPlan) -> FeatureBenchmarkBatchR
             feature_selection=feature_selection,
             baseline_report=baseline_report,
             train_dataset_cache_path=cache_path,
+            feature_frame_stride=feature_frame_stride,
         )
         best_model, best_macro_f1 = _best_from_benchmark(benchmark)
         set_results.append(
@@ -665,6 +681,7 @@ def run_feature_benchmarks(plan: FeatureBenchmarkPlan) -> FeatureBenchmarkBatchR
         eval_data_dir=str(eval_data_dir.resolve()),
         output_dir=str(output_dir.resolve()),
         model_names=list(plan.model_names),
+        feature_frame_stride=feature_frame_stride,
         sets=set_results,
         benchmarked_at=datetime.now(timezone.utc).isoformat(),
         report_path="",

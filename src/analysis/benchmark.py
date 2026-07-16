@@ -58,6 +58,7 @@ class BenchmarkResult:
     feature_cache_path: str = ""
     feature_cache_hit: bool = False
     feature_dataset_seconds: float = 0.0
+    feature_frame_stride: int = 1
 
     def to_dict(self) -> dict[str, Any]:
         payload = {
@@ -73,6 +74,7 @@ class BenchmarkResult:
             "feature_cache_path": self.feature_cache_path,
             "feature_cache_hit": self.feature_cache_hit,
             "feature_dataset_seconds": self.feature_dataset_seconds,
+            "feature_frame_stride": self.feature_frame_stride,
         }
         if self.baseline_report is not None:
             payload["baseline_report"] = self.baseline_report.to_dict()
@@ -90,6 +92,7 @@ def run_benchmark(
     filter_empty_skeleton: bool = True,
     baseline_report: ModelEvaluation | None = None,
     train_dataset_cache_path: Path | None = None,
+    feature_frame_stride: int = 1,
 ) -> BenchmarkResult:
     """批量训练多个模型，并在同一评测集上生成对比结果。"""
     train_data_dir = Path(train_data_dir)
@@ -108,6 +111,7 @@ def run_benchmark(
         output_dir,
     )
     registry = default_registry()
+    frame_stride = max(1, int(feature_frame_stride or 1))
     logger.info("benchmark 加载训练数据: {}", train_data_dir)
     train_records = load_all_records(train_data_dir)
     cache_path = Path(train_dataset_cache_path) if train_dataset_cache_path else None
@@ -124,6 +128,7 @@ def run_benchmark(
             registry,
             feature_selection=feature_selection,
             feature_jobs=workers,
+            feature_frame_stride=frame_stride,
         )
         if cache_path:
             save_dataset(train_dataset, cache_path)
@@ -240,6 +245,7 @@ def run_benchmark(
         feature_cache_path=str(cache_path.resolve()) if cache_path else "",
         feature_cache_hit=feature_cache_hit,
         feature_dataset_seconds=feature_dataset_seconds,
+        feature_frame_stride=frame_stride,
     )
     (output_dir / "benchmark_summary.json").write_text(
         json.dumps(result.to_dict(), ensure_ascii=False, indent=2),
@@ -445,6 +451,7 @@ def _write_benchmark_report(result: BenchmarkResult, output_dir: Path) -> Path:
             "",
             f"- 特征数据来源：`{'cache' if result.feature_cache_hit else 'extract'}`",
             f"- 特征数据耗时：`{_fmt(result.feature_dataset_seconds, digits=3)}s`",
+            f"- 特征帧采样间隔：`{result.feature_frame_stride}`",
             f"- 特征缓存：`{result.feature_cache_path or '-'}`",
             "",
             _timings_markdown_table(result.model_timings),

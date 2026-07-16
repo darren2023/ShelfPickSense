@@ -6,7 +6,8 @@
     "sklearn_rf",
     "sklearn_logistic"
   ],
-  "jobs": 4,
+  "jobs": 8,
+  "feature_frame_stride": 2,
   "feature_sets": [
     {
       "name": "all_features"

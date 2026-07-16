@@ -235,6 +235,7 @@ def test_cli_benchmark_features_runs_multiple_feature_sets(tmp_path: Path):
                 "output_dir": str(output_dir),
                 "models": ["sklearn_rf", "sklearn_logistic"],
                 "jobs": 2,
+                "feature_frame_stride": 2,
                 "feature_sets": [
                     {"name": "all_features"},
                     {
@@ -275,7 +276,9 @@ def test_cli_benchmark_features_runs_multiple_feature_sets(tmp_path: Path):
     assert saved_plan["run_output_dir"] == str(run_dir.resolve())
     assert saved_plan["models"] == ["sklearn_rf", "sklearn_logistic"]
     assert saved_plan["jobs"] == 2
+    assert saved_plan["feature_frame_stride"] == 2
     assert [item["name"] for item in saved_plan["feature_sets"]] == ["all_features", "selected"]
+    assert summary["feature_frame_stride"] == 2
     for item in summary["sets"]:
         assert item["benchmark"]["baseline_report"]["model_name"] == "rule_collision"
         assert (
@@ -285,7 +288,9 @@ def test_cli_benchmark_features_runs_multiple_feature_sets(tmp_path: Path):
         assert item["benchmark"]["comparison"][0]["model_name"] == "rule_collision"
         assert item["benchmark"]["feature_cache_path"]
         assert item["benchmark"]["feature_cache_hit"] is False
+        assert item["benchmark"]["feature_frame_stride"] == 2
         assert item["benchmark"]["feature_dataset_seconds"] >= 0.0
+        assert item["benchmark"]["train_results"][0]["frame_count"] == 5
         assert set(item["benchmark"]["model_timings"]) == {"sklearn_rf", "sklearn_logistic"}
         for timing in item["benchmark"]["model_timings"].values():
             assert timing["fit_seconds"] >= 0.0
@@ -314,6 +319,7 @@ def test_cli_benchmark_features_runs_multiple_feature_sets(tmp_path: Path):
         (second_run_dir / "feature_benchmark_summary.json").read_text(encoding="utf-8")
     )
     assert all(item["benchmark"]["feature_cache_hit"] is True for item in second_summary["sets"])
+    assert all(item["benchmark"]["feature_frame_stride"] == 2 for item in second_summary["sets"])
 
 
 def test_cli_export_features(fixture_data_dir: Path, tmp_path: Path):

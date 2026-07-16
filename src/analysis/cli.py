@@ -67,6 +67,7 @@ def _cmd_train(args: argparse.Namespace) -> int:
         feature_selection=load_feature_selection(args.feature_config),
         filter_empty_skeleton=not args.keep_empty_skeleton_frames,
         feature_jobs=args.feature_jobs,
+        feature_frame_stride=args.feature_frame_stride,
     )
     logger.info(
         "训练完成: model={}, frames={}, positive_frames={}, box_samples={}, skipped_empty_skeleton={}",
@@ -536,6 +537,7 @@ def _cmd_benchmark(args: argparse.Namespace) -> int:
         jobs=args.jobs,
         feature_selection=load_feature_selection(args.feature_config),
         filter_empty_skeleton=not args.keep_empty_skeleton_frames,
+        feature_frame_stride=args.feature_frame_stride,
     )
     logger.info("benchmark 完成: models={}, output={}", len(result.model_names), result.output_dir)
     _log_json(result.comparison)
@@ -555,6 +557,8 @@ def _cmd_benchmark_features(args: argparse.Namespace) -> int:
         plan.model_names = list(args.models)
     if args.jobs:
         plan.jobs = int(args.jobs)
+    if args.feature_frame_stride:
+        plan.feature_frame_stride = int(args.feature_frame_stride)
 
     if args.report_only:
         logger.info(
@@ -566,10 +570,11 @@ def _cmd_benchmark_features(args: argparse.Namespace) -> int:
         logger.info("多特征 benchmark 报告已重新生成: {}", result.report_path)
     else:
         logger.info(
-            "开始多特征 benchmark: sets={}, models={}, jobs={}, train_data={}, eval_data={}, output={}",
+            "开始多特征 benchmark: sets={}, models={}, jobs={}, feature_frame_stride={}, train_data={}, eval_data={}, output={}",
             len(plan.sets),
             plan.model_names,
             plan.jobs,
+            plan.feature_frame_stride,
             plan.train_data_dir,
             plan.eval_data_dir or plan.train_data_dir,
             plan.output_dir,
@@ -634,7 +639,12 @@ def _cmd_export_features(args: argparse.Namespace) -> int:
         args.feature_config or "",
     )
     feature_selection = load_feature_selection(args.feature_config)
-    dataset = load_dataset(data_dir, feature_selection=feature_selection, feature_jobs=args.feature_jobs)
+    dataset = load_dataset(
+        data_dir,
+        feature_selection=feature_selection,
+        feature_jobs=args.feature_jobs,
+        feature_frame_stride=args.feature_frame_stride,
+    )
     out_dir.mkdir(parents=True, exist_ok=True)
 
     frame_rows = []
@@ -703,6 +713,7 @@ def _cmd_export_features(args: argparse.Namespace) -> int:
         "frame_feature_names": dataset.frame_feature_names,
         "box_feature_names": dataset.box_feature_names,
         "feature_selection": feature_selection.to_dict() if feature_selection else None,
+        "feature_frame_stride": args.feature_frame_stride,
     }
     meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -751,6 +762,7 @@ def _cmd_analyze_features(args: argparse.Namespace) -> int:
             top_n=args.top_n,
             feature_selection=feature_selection,
             feature_jobs=args.feature_jobs,
+            feature_frame_stride=args.feature_frame_stride,
         )
     logger.info(
         "特征相关性分析完成: frames={}, box_samples={}, output={}",
@@ -970,6 +982,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_train.add_argument("--feature-config", default="", help="特征选择 JSON 配置路径（默认使用全部特征）")
     p_train.add_argument("--feature-jobs", type=int, default=1, help="特征提取并行 record 数（默认 1）")
+    p_train.add_argument("--feature-frame-stride", type=int, default=1, help="特征提取帧采样间隔：每 N 个骨架帧取 1 帧（默认 1）")
     p_train.add_argument(
         "--keep-empty-skeleton-frames",
         action="store_true",
@@ -1016,6 +1029,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_bench.add_argument("--jobs", type=int, default=8, help="并行运行的模型数量（默认 8）")
     p_bench.add_argument("--feature-config", default="", help="特征选择 JSON 配置路径（默认使用全部特征）")
+    p_bench.add_argument("--feature-frame-stride", type=int, default=1, help="特征提取帧采样间隔：每 N 个骨架帧取 1 帧（默认 1）")
     p_bench.add_argument(
         "--keep-empty-skeleton-frames",
         action="store_true",
@@ -1037,6 +1051,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="覆盖配置中的模型列表",
     )
     p_bench_features.add_argument("--jobs", type=int, default=0, help="覆盖配置中的并行模型数")
+    p_bench_features.add_argument("--feature-frame-stride", type=int, default=0, help="覆盖配置中的特征提取帧采样间隔：每 N 个骨架帧取 1 帧")
     p_bench_features.add_argument(
         "--report-only",
         action="store_true",
@@ -1060,6 +1075,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_export.add_argument("--feature-config", default="", help="特征选择 JSON 配置路径（默认导出全部特征）")
     p_export.add_argument("--feature-jobs", type=int, default=1, help="特征提取并行 record 数（默认 1）")
+    p_export.add_argument("--feature-frame-stride", type=int, default=1, help="特征提取帧采样间隔：每 N 个骨架帧取 1 帧（默认 1）")
     _add_logging_args(p_export)
     p_export.set_defaults(func=_cmd_export_features)
 
@@ -1078,6 +1094,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_analyze.add_argument("--top-n", type=int, default=100, help="最多输出高相关特征对数量（默认 100）")
     p_analyze.add_argument("--feature-config", default="", help="特征选择 JSON 配置路径（默认分析全部特征）")
     p_analyze.add_argument("--feature-jobs", type=int, default=1, help="从原始 data-dir 提取特征时的并行 record 数（默认 1）")
+    p_analyze.add_argument("--feature-frame-stride", type=int, default=1, help="从原始 data-dir 提取特征时的帧采样间隔：每 N 个骨架帧取 1 帧（默认 1）")
     _add_logging_args(p_analyze)
     p_analyze.set_defaults(func=_cmd_analyze_features)
 

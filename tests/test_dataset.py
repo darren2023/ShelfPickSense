@@ -44,6 +44,20 @@ def test_filter_empty_skeleton_frames_before_training(tmp_path: Path):
     assert result.skipped_empty_skeleton_frames == 3
 
 
+def test_build_dataset_feature_frame_stride(tmp_path: Path):
+    from analysis.dataset import build_dataset
+    from analysis.features.registry import default_registry
+    from analysis.records import load_record
+
+    fixture_dir = make_fixture_record(tmp_path / "record_001")
+    record = load_record(fixture_dir)
+
+    dataset = build_dataset([record], default_registry(), feature_frame_stride=3)
+
+    assert dataset.frame_count == 4
+    assert [sample.frame_idx for sample in dataset.frame_samples] == [1, 4, 7, 10]
+
+
 def test_keep_empty_skeleton_frames_option(tmp_path: Path):
     from analysis.train import train_model
 

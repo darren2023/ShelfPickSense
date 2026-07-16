@@ -119,6 +119,8 @@ uv run python main.py export-features \
 
 `--feature-jobs` 同样适用于 `train` 和从原始 `--data-dir` 执行的 `analyze-features`。`benchmark` 使用已有的 `--jobs` 同时控制特征提取并行和模型并行。单条 record 内部仍按帧串行处理，因为部分时序特征依赖历史帧。
 
+如需对已加载的骨架帧进一步下采样，可使用 `--feature-frame-stride N`，表示按每条记录内的骨架帧顺序每 `N` 帧取 1 帧。该参数适用于 `train`、`benchmark`、`benchmark-features`、`export-features`，以及从原始 `--data-dir` 执行的 `analyze-features`；默认 `1` 表示不下采样。
+
 支持的格式：
 
 - `parquet`：默认格式，适合后续程序读取。
@@ -504,6 +506,7 @@ models/benchmark/
   "output_dir": "models/feature_benchmark",
   "models": ["sklearn_rf", "sklearn_logistic"],
   "jobs": 4,
+  "feature_frame_stride": 1,
   "feature_sets": [
     {"name": "all_features"},
     {
@@ -542,7 +545,8 @@ uv run python main.py benchmark-features \
   --eval-data-dir data/split/Test \
   --output models/feature_benchmark_run1 \
   --models sklearn_rf sklearn_logistic \
-  --jobs 2
+  --jobs 2 \
+  --feature-frame-stride 5
 ```
 
 若 benchmark 已经跑完，只想基于已有结果重新生成 Markdown 报告（不重新训练或评测）：
@@ -589,7 +593,9 @@ models/feature_benchmark/
 
 `rule_collision` 使用 `infer-collision` 的默认参数，作为多特征配置 benchmark 的固定规则基线。一次 `benchmark-features` 运行中，`rule_collision` 只会在 run 目录下执行一次；各特征子目录内的 `benchmark_report.md` 会复用同一份规则基线结果，并包含规则基线对比与无骨架帧过滤后的训练统计。
 
-各特征配置的训练特征会序列化到 `output_dir/feature_cache/*.npz`。缓存 key 会包含训练数据文件摘要和特征配置；再次运行相同数据与相同特征配置时，会直接加载缓存，跳过训练特征提取。每个特征配置的 `benchmark_summary.json` 会记录 `feature_cache_path`、`feature_cache_hit`、`feature_dataset_seconds`，以及 `model_timings`（各模型训练拟合、保存、评测和总耗时）。对应的 `benchmark_report.md` 也会包含“模型计算耗时”表。
+`feature_frame_stride` 控制特征提取时的帧采样间隔，默认 `1` 表示使用全部已加载骨架帧；设为 `5` 表示按记录内骨架帧顺序每 5 帧取 1 帧。CLI 可用 `--feature-frame-stride` 临时覆盖 plan 中的值。
+
+各特征配置的训练特征会序列化到 `output_dir/feature_cache/*.npz`。缓存 key 会包含训练数据文件摘要、特征配置和 `feature_frame_stride`；再次运行相同数据、相同特征配置与相同采样间隔时，会直接加载缓存，跳过训练特征提取。每个特征配置的 `benchmark_summary.json` 会记录 `feature_cache_path`、`feature_cache_hit`、`feature_dataset_seconds`，以及 `model_timings`（各模型训练拟合、保存、评测和总耗时）。对应的 `benchmark_report.md` 也会包含“模型计算耗时”表。
 
 ## Benchmark 训练测试报告
 

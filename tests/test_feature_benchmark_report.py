@@ -59,6 +59,7 @@ def test_write_batch_report_includes_per_feature_model_tables(tmp_path: Path):
         eval_data_dir="/test",
         output_dir=str(tmp_path),
         model_names=["sklearn_rf", "sklearn_logistic"],
+        feature_frame_stride=1,
         sets=[
             FeatureBenchmarkSetResult(
                 name="consecutive_hit_3",

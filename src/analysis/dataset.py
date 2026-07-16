@@ -234,16 +234,24 @@ def _feature_extract_log_interval(total_frames: int) -> int:
     return 500
 
 
+def _stride_frames(frames: list[FramePersons], frame_stride: int) -> list[FramePersons]:
+    stride = max(1, int(frame_stride or 1))
+    if stride <= 1:
+        return frames
+    return frames[::stride]
+
+
 def _extract_record_samples(
     record_index: int,
     record: RecordData,
     registry: FeatureRegistry,
     frame_feature_names: list[str],
     box_feature_names: list[str],
+    frame_stride: int,
 ) -> _RecordExtractionResult:
     frame_samples: list[FrameSample] = []
     box_samples: list[BoxSample] = []
-    frames = record.frames()
+    frames = _stride_frames(record.frames(), frame_stride)
     frame_index = record.frame_index()
 
     for frame in frames:
@@ -342,6 +350,7 @@ def build_dataset(
     *,
     filter_empty_skeleton: bool = False,
     feature_jobs: int = 1,
+    feature_frame_stride: int = 1,
 ) -> Dataset:
     reg = registry or default_registry()
     frame_samples: list[FrameSample] = []
@@ -349,12 +358,16 @@ def build_dataset(
     frame_feature_names: list[str] = []
     box_feature_names: list[str] = []
 
-    total_frames = sum(len(record.frames()) for record in records)
+    frame_stride = max(1, int(feature_frame_stride or 1))
+    total_source_frames = sum(len(record.frames()) for record in records)
+    total_frames = sum(len(_stride_frames(record.frames(), frame_stride)) for record in records)
     log_interval = _feature_extract_log_interval(total_frames)
     logger.info(
-        "开始提取特征: records={}, total_frames={}, filter_empty_skeleton={}",
+        "开始提取特征: records={}, total_frames={}, source_frames={}, frame_stride={}, filter_empty_skeleton={}",
         len(records),
         total_frames,
+        total_source_frames,
+        frame_stride,
         filter_empty_skeleton,
     )
 
@@ -384,6 +397,7 @@ def build_dataset(
                     reg,
                     frame_feature_names,
                     box_feature_names,
+                    frame_stride,
                 )
                 for record_index, record in enumerate(records, start=1)
             ]
@@ -424,14 +438,15 @@ def build_dataset(
 
     processed_frames = 0
     for record_index, record in enumerate(records, start=1):
-        frames = record.frames()
+        frames = _stride_frames(record.frames(), frame_stride)
         frame_index = record.frame_index()
         logger.info(
-            "提取特征 [{}/{}]: record={} frames={}",
+            "提取特征 [{}/{}]: record={} frames={} frame_stride={}",
             record_index,
             len(records),
             record.record_id,
             len(frames),
+            frame_stride,
         )
 
         for frame in frames:
@@ -517,6 +532,7 @@ def load_dataset(
     *,
     filter_empty_skeleton: bool = False,
     feature_jobs: int = 1,
+    feature_frame_stride: int = 1,
 ) -> Dataset:
     from pathlib import Path
 
@@ -527,4 +543,5 @@ def load_dataset(
         feature_selection=feature_selection,
         filter_empty_skeleton=filter_empty_skeleton,
         feature_jobs=feature_jobs,
+        feature_frame_stride=feature_frame_stride,
     )
