@@ -177,6 +177,117 @@ uv run python main.py infer-frame \
 {"record_id":"demo","frame_idx":2,"is_picking":true,"picking_prob":0.91,"predicted_box_tokens":["S1:A1"]}
 ```
 
+## HTTP 推理服务
+
+用于部署时，上游骨架检测/姿态估计模块生成当前帧骨架后，可以直接 POST 到推理服务。
+
+配置文件示例见 `configs/inference_service.example.json`：
+
+```json
+{
+  "host": "0.0.0.0",
+  "port": 8765,
+  "model_dir": "models/rf",
+  "annotation_path": "data/demo/annotation.json",
+  "infer_width": 852,
+  "infer_height": 480,
+  "record_id": "camera_01",
+  "max_request_bytes": 8388608
+}
+```
+
+启动：
+
+```bash
+uv run python main.py serve-inference --config configs/inference_service.example.json
+```
+
+接口：
+
+- `GET /health`：服务状态、当前 record、推理尺寸、货框数量。
+- `POST /predict`：单帧推理。
+- `POST /annotation`：更新 annotation，支持传入 `annotation` 对象或 `annotation_path`。
+- `POST /reset`：清空时序历史，可同时传入新的 `record_id`。
+
+`POST /predict` 推荐请求体是当前帧的骨架行数组。每个人一行；同一帧有多个人时，数组里包含多行相同 `frame_idx`、不同 `person_track_id` 的记录。
+
+```json
+[
+  {
+    "frame_idx": 123,
+    "source_frame_idx": 123,
+    "timestamp_sec": 4.92,
+    "person_id": 0,
+    "person_track_id": 1,
+    "bbox_x1": 438.85,
+    "bbox_y1": 4.68,
+    "bbox_x2": 517.55,
+    "bbox_y2": 208.13,
+    "kpt_0_x": 477.71,
+    "kpt_0_y": 22.96,
+    "kpt_0_score": 0.8621
+  }
+]
+```
+
+关键点字段按 COCO 17 点展开为 `kpt_0_x`、`kpt_0_y`、`kpt_0_score` 到 `kpt_16_x`、`kpt_16_y`、`kpt_16_score`。服务也兼容旧格式 `{"persons": [...]}` / `{"skeletons": [...]}`，其中每个 person 直接包含 `keypoints`。
+
+响应：
+
+```json
+{
+  "record_id": "camera_01",
+  "frame_idx": 123,
+  "is_picking": false,
+  "picking_prob": 0.12,
+  "predicted_box_tokens": []
+}
+```
+
+## 打包
+
+Windows：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/build_inference_service_windows.ps1
+```
+
+如果服务加载的是 XGBoost 或 LightGBM 模型，可追加 `-IncludeXGBoost` 或 `-IncludeLightGBM`。
+
+Ubuntu：
+
+```bash
+bash scripts/build_inference_service_ubuntu.sh
+```
+
+打包脚本使用 Nuitka。默认打包不包含 OpenCV，也不会收集 `xgboost.testing`。如果服务加载的是 XGBoost 或 LightGBM 模型，可设置 `INCLUDE_XGBOOST=1` 或 `INCLUDE_LIGHTGBM=1` 后再运行脚本。
+
+输出文件默认位于 `dist/`。运行方式：
+
+```bash
+dist/shelf-pick-inference-service --config configs/inference_service.example.json
+```
+
+## record 推送脚本
+
+用于本地联调服务时，可以读取一条 record 的 `skeleton.parquet`，按 `frame_idx` 分组后逐帧推送到 `/predict`：
+
+```bash
+uv run python scripts/push_record_to_inference_service.py \
+  --record-dir data/demo/record_001 \
+  --url http://127.0.0.1:8765 \
+  --output outputs/service_predictions.jsonl
+```
+
+常用参数：
+
+- `--record-dir`：包含 `skeleton.parquet` 的 record 目录。
+- `--url`：服务地址或完整 `/predict` URL。
+- `--start-frame`：起始 `frame_idx`。
+- `--max-frames`：最多推送帧数，`0` 表示全部。
+- `--realtime --fps 25`：按帧率间隔推送，模拟实时流。
+- `--output`：可选 JSONL 响应输出路径。
+
 ## 注意事项
 
 - 调用 `predict_frame()` 前必须先加载模型。

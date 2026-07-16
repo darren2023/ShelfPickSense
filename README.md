@@ -96,6 +96,39 @@ uv run python main.py analyze-features --features-dir outputs/features --output 
 uv run python main.py infer-frame --model models/rf --record-dir data/demo --video demo.mp4 --output outputs/realtime.jsonl
 ```
 
+启动实时推理 HTTP 服务（上游模块生成骨架后 POST 到服务）：
+
+```bash
+uv run python main.py serve-inference --config configs/inference_service.example.json
+```
+
+单帧请求：
+
+```bash
+curl -X POST http://127.0.0.1:8765/predict ^
+  -H "Content-Type: application/json" ^
+  -d "[{\"frame_idx\":1,\"source_frame_idx\":1,\"timestamp_sec\":0,\"person_id\":0,\"person_track_id\":1,\"kpt_0_x\":477.71,\"kpt_0_y\":22.96,\"kpt_0_score\":0.8621}]"
+```
+
+使用 Nuitka 打包为可执行程序：
+
+```bash
+# Windows PowerShell
+powershell -ExecutionPolicy Bypass -File scripts/build_inference_service_windows.ps1
+
+# Ubuntu
+bash scripts/build_inference_service_ubuntu.sh
+```
+
+读取一个 record 并逐帧推送给推理服务：
+
+```bash
+uv run python scripts/push_record_to_inference_service.py \
+  --record-dir data/demo/record_001 \
+  --url http://127.0.0.1:8765 \
+  --output outputs/service_predictions.jsonl
+```
+
 用规则碰撞方法逐帧推理：
 
 ```bash
@@ -129,5 +162,6 @@ src/analysis/
   benchmark.py          # 多模型批量训练评测与基线对比
   feature_benchmark.py  # 多特征配置批量 benchmark
   realtime.py           # 外部应用实时逐帧推理
+  inference_service.py  # 可打包 HTTP 实时推理服务
   cli.py                # 命令行入口
 ```

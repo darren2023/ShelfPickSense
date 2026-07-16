@@ -57,7 +57,9 @@ class RealtimePickingPredictor:
 
     `predict_frame()` 的骨架输入支持：
     - `list[dict]`：当前帧 persons 列表；
+    - `list[dict]`：当前帧 skeleton 表格行列表（含 kpt_0_x/kpt_0_y/kpt_0_score 等字段）；
     - `dict`：包含 `persons` / `skeletons` / 单个人体 `keypoints`；
+    - `dict`：单个 skeleton 表格行；
     - `FramePersons`。
     """
 
@@ -111,6 +113,13 @@ class RealtimePickingPredictor:
         self.record.infer_width = self.infer_width
         self.record.infer_height = self.infer_height
         self._rebuild_box_index()
+
+    def set_record_id(self, record_id: str) -> None:
+        self.record.record_id = str(record_id or "realtime")
+        self.record.labels.record_id = self.record.record_id
+
+    def reset_history(self) -> None:
+        self._frame_history.clear()
 
     def set_annotation(
         self,
@@ -263,34 +272,85 @@ class RealtimePickingPredictor:
                 persons=skeleton_data.persons,
             )
         if isinstance(skeleton_data, list):
+            first = next((item for item in skeleton_data if isinstance(item, dict)), {})
+            resolved_frame_idx = self._resolve_frame_idx(first, frame_idx=frame_idx)
+            resolved_timestamp = self._resolve_timestamp(first, timestamp_sec=timestamp_sec)
             return FramePersons(
-                frame_idx=int(frame_idx or 0),
-                timestamp_sec=float(timestamp_sec or 0.0),
-                persons=skeleton_data,
+                frame_idx=resolved_frame_idx,
+                timestamp_sec=resolved_timestamp,
+                persons=[self._normalize_person(item) for item in skeleton_data if isinstance(item, dict)],
             )
 
-        try:
-            resolved_frame_idx = int(
-                frame_idx
-                if frame_idx is not None
-                else skeleton_data.get("frame_idx") or skeleton_data.get("source_frame_idx") or 0
-            )
-        except (TypeError, ValueError):
-            resolved_frame_idx = 0
-        try:
-            resolved_timestamp = float(
-                timestamp_sec if timestamp_sec is not None else skeleton_data.get("timestamp_sec") or 0.0
-            )
-        except (TypeError, ValueError):
-            resolved_timestamp = 0.0
+        resolved_frame_idx = self._resolve_frame_idx(skeleton_data, frame_idx=frame_idx)
+        resolved_timestamp = self._resolve_timestamp(skeleton_data, timestamp_sec=timestamp_sec)
 
         persons = skeleton_data.get("persons") or skeleton_data.get("skeletons")
         if persons is None and "keypoints" in skeleton_data:
+            persons = [skeleton_data]
+        if persons is None and self._is_skeleton_row(skeleton_data):
             persons = [skeleton_data]
         if not isinstance(persons, list):
             persons = []
         return FramePersons(
             frame_idx=resolved_frame_idx,
             timestamp_sec=resolved_timestamp,
-            persons=persons,
+            persons=[self._normalize_person(item) for item in persons if isinstance(item, dict)],
         )
+
+    def _resolve_frame_idx(self, data: dict[str, Any], *, frame_idx: int | None) -> int:
+        try:
+            return int(
+                frame_idx
+                if frame_idx is not None
+                else data.get("frame_idx") or data.get("source_frame_idx") or 0
+            )
+        except (TypeError, ValueError):
+            return 0
+
+    def _resolve_timestamp(self, data: dict[str, Any], *, timestamp_sec: float | None) -> float:
+        try:
+            return float(timestamp_sec if timestamp_sec is not None else data.get("timestamp_sec") or 0.0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    def _normalize_person(self, data: dict[str, Any]) -> dict[str, Any]:
+        if "keypoints" in data:
+            return data
+        if not self._is_skeleton_row(data):
+            return data
+        keypoints: list[list[float | None]] = []
+        for idx in range(17):
+            x = self._optional_float(data.get(f"kpt_{idx}_x"))
+            y = self._optional_float(data.get(f"kpt_{idx}_y"))
+            score = self._optional_float(data.get(f"kpt_{idx}_score")) or 0.0
+            keypoints.append([x, y, score])
+        person: dict[str, Any] = {
+            "person_id": self._optional_int(data.get("person_id")) or 0,
+            "keypoints": keypoints,
+        }
+        track_id = self._optional_int(data.get("person_track_id"))
+        if track_id is not None:
+            person["person_track_id"] = track_id
+        bbox_keys = ("bbox_x1", "bbox_y1", "bbox_x2", "bbox_y2")
+        if any(key in data for key in bbox_keys):
+            person["bbox"] = [self._optional_float(data.get(key)) or 0.0 for key in bbox_keys]
+        return person
+
+    def _is_skeleton_row(self, data: dict[str, Any]) -> bool:
+        return any(f"kpt_{idx}_x" in data or f"kpt_{idx}_y" in data for idx in range(17))
+
+    def _optional_float(self, value: Any) -> float | None:
+        try:
+            if pd.isna(value):
+                return None
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    def _optional_int(self, value: Any) -> int | None:
+        try:
+            if pd.isna(value):
+                return None
+            return int(value)
+        except (TypeError, ValueError):
+            return None

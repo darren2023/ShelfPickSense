@@ -1,0 +1,10 @@
+{
+  "host": "0.0.0.0",
+  "port": 8765,
+  "model_dir": "models/rf",
+  "annotation_path": "data/demo/annotation.json",
+  "infer_width": 852,
+  "infer_height": 480,
+  "record_id": "camera_01",
+  "max_request_bytes": 8388608
+}

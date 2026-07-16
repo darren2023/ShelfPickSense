@@ -18,6 +18,7 @@ dependencies = [
 
 [project.scripts]
 analysis = "analysis.cli:main"
+inference-service = "analysis.inference_service:main"
 
 [build-system]
 requires = ["hatchling"]

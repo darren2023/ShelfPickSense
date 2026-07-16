@@ -825,6 +825,14 @@ def _cmd_infer_frame(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_serve_inference(args: argparse.Namespace) -> int:
+    from analysis.inference_service import InferenceServiceConfig, serve
+
+    config = InferenceServiceConfig.from_file(Path(args.config))
+    serve(config)
+    return 0
+
+
 def _cmd_box_layout(args: argparse.Namespace) -> int:
     import csv
     import sys
@@ -1110,6 +1118,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_infer.add_argument("--output", default="", help="JSONL 输出文件路径")
     _add_logging_args(p_infer)
     p_infer.set_defaults(func=_cmd_infer_frame)
+
+    p_serve = sub.add_parser("serve-inference", help="启动实时推理 HTTP 服务")
+    p_serve.add_argument("--config", required=True, help="推理服务 JSON 配置路径")
+    _add_logging_args(p_serve)
+    p_serve.set_defaults(func=_cmd_serve_inference)
 
     p_infer_rule = sub.add_parser("infer-rule", help="用规则碰撞方法模拟视频流逐帧推理")
     p_infer_rule.add_argument(
