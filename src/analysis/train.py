@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -27,6 +28,8 @@ class TrainResult:
     box_samples: int
     trained_at: str
     skipped_empty_skeleton_frames: int = 0
+    fit_seconds: float = 0.0
+    save_seconds: float = 0.0
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -92,10 +95,14 @@ def train_model_from_dataset(
     output_dir = Path(output_dir)
     model = create_model(model_name)
     logger.info("开始拟合模型: {}", model.name)
+    fit_start = time.perf_counter()
     model.fit(dataset)
-    logger.info("模型拟合完成: {}", model.name)
+    fit_seconds = time.perf_counter() - fit_start
+    logger.info("模型拟合完成: {} elapsed={:.3f}s", model.name, fit_seconds)
+    save_start = time.perf_counter()
     model.save(output_dir)
-    logger.info("模型已保存: {}", output_dir)
+    save_seconds = time.perf_counter() - save_start
+    logger.info("模型已保存: {} elapsed={:.3f}s", output_dir, save_seconds)
 
     result = TrainResult(
         model_name=model.name,
@@ -107,6 +114,8 @@ def train_model_from_dataset(
         box_samples=len(dataset.box_samples),
         trained_at=datetime.now(timezone.utc).isoformat(),
         skipped_empty_skeleton_frames=skipped_empty_skeleton_frames,
+        fit_seconds=fit_seconds,
+        save_seconds=save_seconds,
     )
     (output_dir / "train_result.json").write_text(
         json.dumps(result.to_dict(), ensure_ascii=False, indent=2),

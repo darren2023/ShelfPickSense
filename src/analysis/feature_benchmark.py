@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -23,7 +24,8 @@ from analysis.evaluation import BoxMetrics, ModelEvaluation, PickingMetrics
 from analysis.train import TrainResult
 from analysis.features.selection import FeatureSelection, load_feature_selection
 from analysis.models import SUPPORTED_MODEL_NAMES
-from analysis.records import load_all_records
+from analysis.records import discover_record_dirs, load_all_records
+from analysis.constants import ANNOTATION_FILE, EVENT_REVIEW_FILE, SKELETON_FILE
 from analysis.rule_baseline import RULE_COLLISION_BASELINE_NAME, run_external_collision_baseline
 
 
@@ -173,6 +175,59 @@ def _write_resolved_plan(plan: FeatureBenchmarkPlan, output_dir: Path) -> Path:
         encoding="utf-8",
     )
     return path
+
+
+def _file_fingerprint(path: Path) -> dict[str, Any]:
+    if not path.is_file():
+        return {"path": str(path), "exists": False}
+    stat = path.stat()
+    return {
+        "path": str(path.resolve()),
+        "exists": True,
+        "size": stat.st_size,
+        "mtime_ns": stat.st_mtime_ns,
+    }
+
+
+def _feature_cache_signature(
+    *,
+    train_data_dir: Path,
+    feature_selection: FeatureSelection | None,
+) -> dict[str, Any]:
+    record_dirs = discover_record_dirs(train_data_dir)
+    records = []
+    for record_dir in record_dirs:
+        records.append(
+            {
+                "record_dir": str(record_dir.resolve()),
+                "skeleton": _file_fingerprint(record_dir / SKELETON_FILE),
+                "annotation": _file_fingerprint(record_dir / ANNOTATION_FILE),
+                "event_review": _file_fingerprint(record_dir / EVENT_REVIEW_FILE),
+            }
+        )
+    return {
+        "version": 1,
+        "train_data_dir": str(Path(train_data_dir).resolve()),
+        "feature_selection": feature_selection.to_dict() if feature_selection else None,
+        "records": records,
+    }
+
+
+def _feature_cache_path(
+    *,
+    base_output_dir: Path,
+    set_name: str,
+    train_data_dir: Path,
+    feature_selection: FeatureSelection | None,
+) -> Path:
+    signature = _feature_cache_signature(
+        train_data_dir=train_data_dir,
+        feature_selection=feature_selection,
+    )
+    digest = hashlib.sha256(
+        json.dumps(signature, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    ).hexdigest()[:16]
+    return base_output_dir / "feature_cache" / f"{_safe_dir_name(set_name)}_{digest}.npz"
 
 
 def _parse_set_spec(data: dict[str, Any], index: int) -> FeatureBenchmarkSetSpec:
@@ -446,6 +501,10 @@ def _benchmark_result_from_dict(data: dict[str, Any]) -> BenchmarkResult:
         comparison=comparison,
         benchmarked_at=str(data.get("benchmarked_at") or ""),
         baseline_report=baseline_report,
+        model_timings=dict(data.get("model_timings") or {}),
+        feature_cache_path=str(data.get("feature_cache_path") or ""),
+        feature_cache_hit=bool(data.get("feature_cache_hit") or False),
+        feature_dataset_seconds=float(data.get("feature_dataset_seconds") or 0.0),
     )
 
 
@@ -565,11 +624,18 @@ def run_feature_benchmarks(plan: FeatureBenchmarkPlan) -> FeatureBenchmarkBatchR
     for spec in plan.sets:
         feature_selection = resolve_feature_selection(spec, base_dir=base_dir)
         set_output = output_dir / _safe_dir_name(spec.name)
+        cache_path = _feature_cache_path(
+            base_output_dir=base_output_dir,
+            set_name=spec.name,
+            train_data_dir=plan.train_data_dir,
+            feature_selection=feature_selection,
+        )
         logger.info(
-            "开始特征配置 benchmark: name={}, output={}, feature_config={}",
+            "开始特征配置 benchmark: name={}, output={}, feature_config={}, feature_cache={}",
             spec.name,
             set_output,
             feature_selection.source_path if feature_selection else "all_features",
+            cache_path,
         )
         benchmark = run_benchmark(
             train_data_dir=plan.train_data_dir,
@@ -579,6 +645,7 @@ def run_feature_benchmarks(plan: FeatureBenchmarkPlan) -> FeatureBenchmarkBatchR
             jobs=plan.jobs,
             feature_selection=feature_selection,
             baseline_report=baseline_report,
+            train_dataset_cache_path=cache_path,
         )
         best_model, best_macro_f1 = _best_from_benchmark(benchmark)
         set_results.append(

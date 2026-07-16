@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -11,7 +12,7 @@ from typing import Any
 
 from loguru import logger
 
-from analysis.dataset import build_dataset, filter_empty_skeleton_frames
+from analysis.dataset import build_dataset, filter_empty_skeleton_frames, load_serialized_dataset, save_dataset
 from analysis.evaluation import Evaluator, ModelEvaluation, compare_reports_with_baseline, save_report
 from analysis.rule_baseline import RULE_BASELINE_NAME, run_rule_baseline
 from analysis.features.registry import default_registry
@@ -53,6 +54,10 @@ class BenchmarkResult:
     comparison: list[dict[str, Any]]
     benchmarked_at: str
     baseline_report: ModelEvaluation | None = None
+    model_timings: dict[str, dict[str, float]] | None = None
+    feature_cache_path: str = ""
+    feature_cache_hit: bool = False
+    feature_dataset_seconds: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
         payload = {
@@ -64,6 +69,10 @@ class BenchmarkResult:
             "reports": [r.to_dict() for r in self.reports],
             "comparison": self.comparison,
             "benchmarked_at": self.benchmarked_at,
+            "model_timings": self.model_timings or {},
+            "feature_cache_path": self.feature_cache_path,
+            "feature_cache_hit": self.feature_cache_hit,
+            "feature_dataset_seconds": self.feature_dataset_seconds,
         }
         if self.baseline_report is not None:
             payload["baseline_report"] = self.baseline_report.to_dict()
@@ -80,6 +89,7 @@ def run_benchmark(
     feature_selection: FeatureSelection | None = None,
     filter_empty_skeleton: bool = True,
     baseline_report: ModelEvaluation | None = None,
+    train_dataset_cache_path: Path | None = None,
 ) -> BenchmarkResult:
     """批量训练多个模型，并在同一评测集上生成对比结果。"""
     train_data_dir = Path(train_data_dir)
@@ -100,13 +110,25 @@ def run_benchmark(
     registry = default_registry()
     logger.info("benchmark 加载训练数据: {}", train_data_dir)
     train_records = load_all_records(train_data_dir)
-    logger.info("benchmark 构建训练数据集")
-    train_dataset = build_dataset(
-        train_records,
-        registry,
-        feature_selection=feature_selection,
-        feature_jobs=workers,
-    )
+    cache_path = Path(train_dataset_cache_path) if train_dataset_cache_path else None
+    feature_cache_hit = False
+    feature_start = time.perf_counter()
+    if cache_path and cache_path.is_file():
+        logger.info("benchmark 加载训练特征缓存: {}", cache_path)
+        train_dataset = load_serialized_dataset(cache_path)
+        feature_cache_hit = True
+    else:
+        logger.info("benchmark 构建训练数据集")
+        train_dataset = build_dataset(
+            train_records,
+            registry,
+            feature_selection=feature_selection,
+            feature_jobs=workers,
+        )
+        if cache_path:
+            save_dataset(train_dataset, cache_path)
+            logger.info("benchmark 训练特征缓存已保存: {}", cache_path)
+    feature_dataset_seconds = time.perf_counter() - feature_start
     skipped_skeleton = 0
     if filter_empty_skeleton:
         train_dataset, skipped_skeleton = filter_empty_skeleton_frames(train_dataset, train_records)
@@ -145,9 +167,10 @@ def run_benchmark(
     else:
         logger.info("benchmark 复用规则基线: {}", baseline_report.model_name)
 
-    def _run_one(model_name: str) -> tuple[str, TrainResult, ModelEvaluation]:
+    def _run_one(model_name: str) -> tuple[str, TrainResult, ModelEvaluation, dict[str, float]]:
         model_dir = output_dir / model_name
         try:
+            task_start = time.perf_counter()
             logger.info("benchmark 子任务开始: model={}, output={}", model_name, model_dir)
             train_result, model = train_model_from_dataset(
                 train_dataset,
@@ -157,34 +180,47 @@ def run_benchmark(
                 model_name=model_name,
                 skipped_empty_skeleton_frames=skipped_skeleton,
             )
+            eval_start = time.perf_counter()
             report = evaluator.evaluate(
                 model,
                 data_dir=str(eval_data_dir.resolve()),
                 predictions_output_path=model_dir / predictions_filename,
             )
             save_report(report, model_dir / "eval_report.json")
+            eval_seconds = time.perf_counter() - eval_start
+            total_seconds = time.perf_counter() - task_start
+            timing = {
+                "fit_seconds": float(train_result.fit_seconds),
+                "save_seconds": float(train_result.save_seconds),
+                "eval_seconds": float(eval_seconds),
+                "total_seconds": float(total_seconds),
+            }
             logger.info(
-                "benchmark 子任务完成: model={}, picking_f1={:.4f}, box_f1={:.4f}",
+                "benchmark 子任务完成: model={}, picking_f1={:.4f}, box_f1={:.4f}, elapsed={:.3f}s",
                 model_name,
                 report.picking.f1,
                 report.box.micro_f1,
+                total_seconds,
             )
-            return model_name, train_result, report
+            return model_name, train_result, report, timing
         except Exception:
             logger.exception("benchmark 子任务失败: model={}", model_name)
             raise
 
     results_by_name: dict[str, tuple[TrainResult, ModelEvaluation]] = {}
+    timings_by_name: dict[str, dict[str, float]] = {}
     if workers == 1 or len(names) <= 1:
         for model_name in names:
-            name, train_result, report = _run_one(model_name)
+            name, train_result, report, timing = _run_one(model_name)
             results_by_name[name] = (train_result, report)
+            timings_by_name[name] = timing
     else:
         with ThreadPoolExecutor(max_workers=min(workers, len(names))) as executor:
             futures = {executor.submit(_run_one, model_name): model_name for model_name in names}
             for future in as_completed(futures):
-                name, train_result, report = future.result()
+                name, train_result, report, timing = future.result()
                 results_by_name[name] = (train_result, report)
+                timings_by_name[name] = timing
 
     train_results = [results_by_name[name][0] for name in names]
     reports = [results_by_name[name][1] for name in names]
@@ -200,6 +236,10 @@ def run_benchmark(
         comparison=comparison,
         benchmarked_at=datetime.now(timezone.utc).isoformat(),
         baseline_report=baseline_report,
+        model_timings={name: timings_by_name[name] for name in names},
+        feature_cache_path=str(cache_path.resolve()) if cache_path else "",
+        feature_cache_hit=feature_cache_hit,
+        feature_dataset_seconds=feature_dataset_seconds,
     )
     (output_dir / "benchmark_summary.json").write_text(
         json.dumps(result.to_dict(), ensure_ascii=False, indent=2),
@@ -266,6 +306,28 @@ def _comparison_markdown_table(rows: list[dict[str, Any]], *, include_baseline_d
                     values.append("")
             else:
                 values.append(_fmt(value))
+        lines.append("| " + " | ".join(values) + " |")
+    return "\n".join(lines) + "\n"
+
+
+def _timings_markdown_table(timings: dict[str, dict[str, float]] | None) -> str:
+    if not timings:
+        return "无耗时统计。\n"
+    columns = [
+        ("model_name", "模型"),
+        ("fit_seconds", "训练拟合(s)"),
+        ("save_seconds", "保存(s)"),
+        ("eval_seconds", "评测(s)"),
+        ("total_seconds", "总耗时(s)"),
+    ]
+    lines = [
+        "| " + " | ".join(label for _, label in columns) + " |",
+        "| " + " | ".join(["---"] * len(columns)) + " |",
+    ]
+    for model_name, row in timings.items():
+        values = [model_name]
+        for key, _label in columns[1:]:
+            values.append(_fmt(row.get(key), digits=3))
         lines.append("| " + " | ".join(values) + " |")
     return "\n".join(lines) + "\n"
 
@@ -378,6 +440,14 @@ def _write_benchmark_report(result: BenchmarkResult, output_dir: Path) -> Path:
             "## 评测集模型对比",
             "",
             _comparison_markdown_table(result.comparison, include_baseline_delta=has_baseline),
+            "",
+            "## 模型计算耗时",
+            "",
+            f"- 特征数据来源：`{'cache' if result.feature_cache_hit else 'extract'}`",
+            f"- 特征数据耗时：`{_fmt(result.feature_dataset_seconds, digits=3)}s`",
+            f"- 特征缓存：`{result.feature_cache_path or '-'}`",
+            "",
+            _timings_markdown_table(result.model_timings),
             "",
             "## 基线对比结论",
             "",

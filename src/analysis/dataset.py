@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 from loguru import logger
@@ -77,6 +78,116 @@ class Dataset:
     @property
     def positive_frame_count(self) -> int:
         return sum(1 for s in self.frame_samples if s.is_picking)
+
+
+def save_dataset(dataset: Dataset, path: Path) -> None:
+    """将已提取特征样本序列化为压缩 npz，供后续 benchmark 直接加载。"""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    frame_x = (
+        np.vstack([sample.x for sample in dataset.frame_samples])
+        if dataset.frame_samples
+        else np.empty((0, len(dataset.frame_feature_names)), dtype=float)
+    )
+    box_x = (
+        np.vstack([sample.x for sample in dataset.box_samples])
+        if dataset.box_samples
+        else np.empty((0, len(dataset.box_feature_names)), dtype=float)
+    )
+    np.savez_compressed(
+        path,
+        frame_feature_names=np.asarray(dataset.frame_feature_names, dtype=str),
+        box_feature_names=np.asarray(dataset.box_feature_names, dtype=str),
+        frame_record_ids=np.asarray([sample.record_id for sample in dataset.frame_samples], dtype=str),
+        frame_indices=np.asarray([sample.frame_idx for sample in dataset.frame_samples], dtype=np.int64),
+        frame_person_track_ids=np.asarray(
+            [
+                -1 if sample.person_track_id is None else int(sample.person_track_id)
+                for sample in dataset.frame_samples
+            ],
+            dtype=np.int64,
+        ),
+        frame_x=frame_x,
+        frame_is_picking=np.asarray([sample.is_picking for sample in dataset.frame_samples], dtype=bool),
+        frame_target_layout_shelf_side=np.asarray(
+            [sample.target_layout_shelf_side for sample in dataset.frame_samples],
+            dtype=np.int64,
+        ),
+        frame_target_layout_layer_norm=np.asarray(
+            [sample.target_layout_layer_norm for sample in dataset.frame_samples],
+            dtype=float,
+        ),
+        frame_target_layout_column_norm=np.asarray(
+            [sample.target_layout_column_norm for sample in dataset.frame_samples],
+            dtype=float,
+        ),
+        box_record_ids=np.asarray([sample.record_id for sample in dataset.box_samples], dtype=str),
+        box_indices=np.asarray([sample.frame_idx for sample in dataset.box_samples], dtype=np.int64),
+        box_tokens=np.asarray([sample.box_token for sample in dataset.box_samples], dtype=str),
+        box_codes=np.asarray([sample.box_code for sample in dataset.box_samples], dtype=np.int64),
+        box_x=box_x,
+        box_is_target=np.asarray([sample.is_target for sample in dataset.box_samples], dtype=bool),
+        box_target_layout_shelf_side=np.asarray(
+            [sample.target_layout_shelf_side for sample in dataset.box_samples],
+            dtype=np.int64,
+        ),
+        box_target_layout_layer_norm=np.asarray(
+            [sample.target_layout_layer_norm for sample in dataset.box_samples],
+            dtype=float,
+        ),
+        box_target_layout_column_norm=np.asarray(
+            [sample.target_layout_column_norm for sample in dataset.box_samples],
+            dtype=float,
+        ),
+    )
+
+
+def load_serialized_dataset(path: Path) -> Dataset:
+    """从 save_dataset 生成的 npz 文件加载特征样本。"""
+    path = Path(path)
+    with np.load(path, allow_pickle=False) as data:
+        frame_feature_names = [str(item) for item in data["frame_feature_names"].tolist()]
+        box_feature_names = [str(item) for item in data["box_feature_names"].tolist()]
+        frame_x = data["frame_x"]
+        box_x = data["box_x"]
+        frame_person_track_ids = data["frame_person_track_ids"]
+        frame_samples = [
+            FrameSample(
+                record_id=str(data["frame_record_ids"][idx]),
+                frame_idx=int(data["frame_indices"][idx]),
+                person_track_id=(
+                    None
+                    if int(frame_person_track_ids[idx]) < 0
+                    else int(frame_person_track_ids[idx])
+                ),
+                x=np.asarray(frame_x[idx], dtype=float),
+                is_picking=bool(data["frame_is_picking"][idx]),
+                target_layout_shelf_side=int(data["frame_target_layout_shelf_side"][idx]),
+                target_layout_layer_norm=float(data["frame_target_layout_layer_norm"][idx]),
+                target_layout_column_norm=float(data["frame_target_layout_column_norm"][idx]),
+            )
+            for idx in range(len(frame_x))
+        ]
+        box_samples = [
+            BoxSample(
+                record_id=str(data["box_record_ids"][idx]),
+                frame_idx=int(data["box_indices"][idx]),
+                box_token=str(data["box_tokens"][idx]),
+                box_code=int(data["box_codes"][idx]),
+                x=np.asarray(box_x[idx], dtype=float),
+                is_target=bool(data["box_is_target"][idx]),
+                target_layout_shelf_side=int(data["box_target_layout_shelf_side"][idx]),
+                target_layout_layer_norm=float(data["box_target_layout_layer_norm"][idx]),
+                target_layout_column_norm=float(data["box_target_layout_column_norm"][idx]),
+            )
+            for idx in range(len(box_x))
+        ]
+    return Dataset(
+        frame_samples=frame_samples,
+        box_samples=box_samples,
+        frame_feature_names=frame_feature_names,
+        box_feature_names=box_feature_names,
+    )
 
 
 @dataclass

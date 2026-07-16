@@ -283,6 +283,14 @@ def test_cli_benchmark_features_runs_multiple_feature_sets(tmp_path: Path):
             == "box_human_det/services/event_engine/collision.py"
         )
         assert item["benchmark"]["comparison"][0]["model_name"] == "rule_collision"
+        assert item["benchmark"]["feature_cache_path"]
+        assert item["benchmark"]["feature_cache_hit"] is False
+        assert item["benchmark"]["feature_dataset_seconds"] >= 0.0
+        assert set(item["benchmark"]["model_timings"]) == {"sklearn_rf", "sklearn_logistic"}
+        for timing in item["benchmark"]["model_timings"].values():
+            assert timing["fit_seconds"] >= 0.0
+            assert timing["eval_seconds"] >= 0.0
+            assert timing["total_seconds"] >= 0.0
     assert summary["output_dir"] == str(run_dir.resolve())
     report = (run_dir / "feature_benchmark_report.md").read_text(encoding="utf-8")
     assert "多特征配置 Benchmark 对比报告" in report
@@ -294,6 +302,18 @@ def test_cli_benchmark_features_runs_multiple_feature_sets(tmp_path: Path):
     assert "sklearn_rf" in report
     assert "all_features" in report
     assert "selected" in report
+    assert len(list((output_dir / "feature_cache").glob("*.npz"))) == 2
+
+    ret = main(["benchmark-features", "--plan", str(plan_path)])
+
+    assert ret == 0
+    run_dirs = sorted(path for path in output_dir.iterdir() if path.is_dir() and path.name.startswith("run_"))
+    assert len(run_dirs) == 2
+    second_run_dir = run_dirs[-1]
+    second_summary = json.loads(
+        (second_run_dir / "feature_benchmark_summary.json").read_text(encoding="utf-8")
+    )
+    assert all(item["benchmark"]["feature_cache_hit"] is True for item in second_summary["sets"])
 
 
 def test_cli_export_features(fixture_data_dir: Path, tmp_path: Path):

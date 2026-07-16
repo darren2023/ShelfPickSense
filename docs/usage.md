@@ -562,9 +562,13 @@ uv run python main.py benchmark-features \
 
 ```text
 models/feature_benchmark/
+  feature_cache/
+    all_features_<hash>.npz
+    selected_spatial_<hash>.npz
   run_2026-07-15_14-30-05/
     feature_benchmark_summary.json
     feature_benchmark_report.md
+    feature_benchmark_plan.json
     rule_collision/
       eval_report.json
       eval_predictions_*.json
@@ -584,6 +588,8 @@ models/feature_benchmark/
 - **结论**：列出各特征配置的最佳模型，并给出全局推荐组合
 
 `rule_collision` 使用 `infer-collision` 的默认参数，作为多特征配置 benchmark 的固定规则基线。一次 `benchmark-features` 运行中，`rule_collision` 只会在 run 目录下执行一次；各特征子目录内的 `benchmark_report.md` 会复用同一份规则基线结果，并包含规则基线对比与无骨架帧过滤后的训练统计。
+
+各特征配置的训练特征会序列化到 `output_dir/feature_cache/*.npz`。缓存 key 会包含训练数据文件摘要和特征配置；再次运行相同数据与相同特征配置时，会直接加载缓存，跳过训练特征提取。每个特征配置的 `benchmark_summary.json` 会记录 `feature_cache_path`、`feature_cache_hit`、`feature_dataset_seconds`，以及 `model_timings`（各模型训练拟合、保存、评测和总耗时）。对应的 `benchmark_report.md` 也会包含“模型计算耗时”表。
 
 ## Benchmark 训练测试报告
 
