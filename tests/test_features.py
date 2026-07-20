@@ -78,6 +78,61 @@ def test_spatial_wrist_and_foot_distance(fixture_data_dir: Path):
     assert frame_feat.features["spatial.p0_left_foot_min_box_dist_norm"] == pytest.approx(1.0)
 
 
+def test_spatial_foot_avg_relative_to_shelf_bottom_bounds():
+    import pandas as pd
+
+    from analysis.annotation import BoxInfo
+    from analysis.box_layout import BoxNumericCode
+    from analysis.constants import LEFT_ANKLE_IDX, RIGHT_ANKLE_IDX
+    from analysis.features.base import FeatureContext
+    from analysis.features.spatial import BoxSpatialFeatureExtractor
+    from analysis.labels import RecordLabels
+    from analysis.records import FramePersons, RecordData
+
+    keypoints: list[list[float | None]] = [[None, None, None] for _ in range(17)]
+    keypoints[LEFT_ANKLE_IDX] = [100.0, 140.0, 0.95]
+    keypoints[RIGHT_ANKLE_IDX] = [120.0, 160.0, 0.95]
+    person = {"person_track_id": 1, "keypoints": keypoints}
+    token = "S1:A1"
+    record = RecordData(
+        record_id="shelf_bottom_test",
+        record_dir=Path("."),
+        skeleton=pd.DataFrame(),
+        annotation={},
+        event_review=None,
+        labels=RecordLabels(record_id="shelf_bottom_test"),
+        infer_width=640.0,
+        infer_height=480.0,
+        box_tokens=[token],
+        box_index={
+            token: BoxInfo(
+                token=token,
+                shelf_code="S1",
+                box_id="A1",
+                polygon=((100.0, 100.0), (400.0, 100.0), (390.0, 200.0), (120.0, 180.0)),
+            )
+        },
+        box_layout={token: BoxNumericCode(shelf_side=1, layer=1, column=1, shelf_code="S1", box_id="A1", token=token)},
+    )
+    frame = FramePersons(frame_idx=1, timestamp_sec=0.0, persons=[person])
+    ctx = FeatureContext.from_record(record, frame).for_shelf("S1").for_person(person, 1)
+
+    features = BoxSpatialFeatureExtractor().extract_frame(ctx)
+
+    assert features["foot_avg_shelf_bottom_y_pos"] == pytest.approx(0.5)
+
+
+def test_spatial_foot_avg_relative_feature_is_frame_feature_only():
+    from analysis.features.registry import default_registry
+    from analysis.features.spatial import BoxSpatialFeatureExtractor
+
+    registry = default_registry()
+    spatial = BoxSpatialFeatureExtractor()
+
+    assert "spatial.foot_avg_shelf_bottom_y_pos" in registry.frame_feature_names()
+    assert "foot_avg_shelf_bottom_y_pos" not in spatial.per_box_feature_names()
+
+
 def test_frame_feature_groups_are_not_merged_into_default_frame_features():
     import pandas as pd
 

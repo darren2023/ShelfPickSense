@@ -13,6 +13,7 @@ from analysis.features.tracking import (
     MAX_PERSON_SLOTS,
     RIGHT_FOOT,
     RIGHT_WRIST,
+    foot_avg_point,
     get_keypoint,
     get_side_point,
     person_track_id,
@@ -134,6 +135,36 @@ def _box_centroid(polygon: tuple[tuple[float, float], ...]) -> tuple[float, floa
     return sum(xs) / len(xs), sum(ys) / len(ys)
 
 
+def _current_shelf_bottom_y_bounds(ctx: FeatureContext) -> tuple[float, float] | None:
+    points = [pt for box in ctx.box_index.values() for pt in box.polygon]
+    if not points:
+        return None
+    side = 0
+    for token in ctx.box_tokens:
+        entry = ctx.record.box_layout.get(token)
+        if entry is not None:
+            side = entry.shelf_side
+            break
+    coord1 = max(points, key=lambda pt: (pt[1], -pt[0]))
+    if side == 2:
+        coord2 = min(points, key=lambda pt: (pt[0], -pt[1]))
+    else:
+        coord2 = max(points, key=lambda pt: (pt[0], pt[1]))
+    return coord2[1], coord1[1]
+
+
+def _foot_avg_shelf_bottom_y_pos(person: dict[str, Any] | None, ctx: FeatureContext) -> float:
+    foot = foot_avg_point(person)
+    bounds = _current_shelf_bottom_y_bounds(ctx)
+    if foot is None or bounds is None:
+        return 0.0
+    p1_y, p2_y = bounds
+    den = p2_y - p1_y
+    if abs(den) < 1e-9:
+        return 0.0
+    return (foot[1] - p1_y) / den
+
+
 class BoxSpatialFeatureExtractor(FeatureExtractor):
     name = "spatial"
 
@@ -164,6 +195,7 @@ class BoxSpatialFeatureExtractor(FeatureExtractor):
                 "min_foot_box_dist_norm",
                 "any_foot_inside_box",
                 "boxes_with_foot_inside",
+                "foot_avg_shelf_bottom_y_pos",
             ]
         )
         return names
@@ -203,6 +235,8 @@ class BoxSpatialFeatureExtractor(FeatureExtractor):
             for side in (LEFT_WRIST, RIGHT_WRIST, LEFT_FOOT, RIGHT_FOOT):
                 out[f"primary_{side}_min_box_dist_norm"] = 1.0
                 out[f"primary_{side}_inside_any_box"] = 0.0
+        current_person = ctx.current_person if ctx.current_person is not None else primary_person
+        out["foot_avg_shelf_bottom_y_pos"] = _foot_avg_shelf_bottom_y_pos(current_person, ctx)
 
         persons = sorted_persons(ctx.frame)
         for slot in range(MAX_PERSON_SLOTS):
