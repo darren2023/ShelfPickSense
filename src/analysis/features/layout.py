@@ -28,11 +28,15 @@ class BoxLayoutFeatureExtractor(FeatureExtractor):
         ]
 
     def extract_per_box(self, ctx: FeatureContext) -> dict[str, dict[str, float]]:
-        layout: dict[str, BoxNumericCode] = ctx.record.box_layout
+        layout: dict[str, BoxNumericCode] = {
+            token: entry
+            for token in ctx.box_tokens
+            if (entry := ctx.record.box_layout.get(token)) is not None
+        }
         if not layout:
             return {}
 
-        shelf_stats = ctx.record.shelf_layout_stats or compute_shelf_layout_stats(layout)
+        shelf_stats = compute_shelf_layout_stats(layout)
         result: dict[str, dict[str, float]] = {}
 
         for token in ctx.box_tokens:

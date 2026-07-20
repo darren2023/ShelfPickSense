@@ -23,6 +23,7 @@ class FeatureContext:
     frame_index: dict[int, FramePersons] = field(default_factory=dict)
     current_person: dict[str, Any] | None = None
     current_track_id: int | None = None
+    current_shelf_code: str | None = None
     _rule_hit_cache: dict[tuple[int | None, int, str | None], int] = field(
         default_factory=dict, repr=False, compare=False
     )
@@ -58,6 +59,25 @@ class FeatureContext:
             frame_index=idx,
         )
 
+    def for_shelf(self, shelf_code: str | None) -> "FeatureContext":
+        key = shelf_code or "_default"
+        box_index = {
+            token: box
+            for token, box in self.box_index.items()
+            if (box.shelf_code or "_default") == key
+        }
+        tokens = [token for token in self.box_tokens if token in box_index]
+        return FeatureContext(
+            record=self.record,
+            frame=self.frame,
+            box_index=box_index,
+            box_tokens=tokens,
+            frame_index=self.frame_index,
+            current_person=self.current_person,
+            current_track_id=self.current_track_id,
+            current_shelf_code=key,
+        )
+
     def for_person(self, person: dict[str, Any], track_id: int | None) -> "FeatureContext":
         return FeatureContext(
             record=self.record,
@@ -71,6 +91,7 @@ class FeatureContext:
             frame_index=self.frame_index,
             current_person=person,
             current_track_id=track_id,
+            current_shelf_code=self.current_shelf_code,
         )
 
 
@@ -81,6 +102,7 @@ class FeatureSet:
     record_id: str
     frame_idx: int
     person_track_id: int | None = None
+    shelf_code: str | None = None
     features: dict[str, float] = field(default_factory=dict)
 
     def names(self) -> list[str]:

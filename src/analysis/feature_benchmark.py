@@ -211,7 +211,7 @@ def _feature_cache_signature(
             }
         )
     return {
-        "version": 2,
+        "version": 3,
         "train_data_dir": str(Path(train_data_dir).resolve()),
         "feature_selection": feature_selection.to_dict() if feature_selection else None,
         "feature_frame_stride": max(1, int(feature_frame_stride or 1)),

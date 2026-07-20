@@ -201,7 +201,7 @@ class RealtimePickingPredictor:
                 group.to_vector(self.model.frame_feature_names),
                 record_id=self.record.record_id,
                 frame_idx=frame_data.frame_idx,
-                box_layout=self.record.box_layout,
+                box_layout=self._box_layout_for_shelf(group.shelf_code),
             )
             for group in self.registry.extract_frame_feature_groups_from_context(ctx)
         ]
@@ -219,6 +219,14 @@ class RealtimePickingPredictor:
             picking_prob=pred.picking_prob,
             predicted_box_tokens=list(pred.predicted_box_tokens),
         )
+
+    def _box_layout_for_shelf(self, shelf_code: str | None) -> dict[str, Any]:
+        key = shelf_code or "_default"
+        return {
+            token: entry
+            for token, entry in self.record.box_layout.items()
+            if (entry.shelf_code or "_default") == key
+        }
 
     def _remember_frame(self, frame: FramePersons, *, keep_back: int = 7) -> None:
         self._frame_history[frame.frame_idx] = frame

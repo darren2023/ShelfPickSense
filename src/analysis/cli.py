@@ -653,6 +653,7 @@ def _cmd_export_features(args: argparse.Namespace) -> int:
             "record_id": sample.record_id,
             "frame_idx": sample.frame_idx,
             "person_track_id": sample.person_track_id,
+            "shelf_code": sample.shelf_code,
             "is_picking": sample.is_picking,
             "target_layout_shelf_side": sample.target_layout_shelf_side,
             "target_layout_layer_norm": sample.target_layout_layer_norm,

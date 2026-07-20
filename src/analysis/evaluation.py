@@ -77,6 +77,15 @@ def _safe_div(num: float, den: float) -> float:
     return float(num / den) if den else 0.0
 
 
+def _box_layout_for_shelf(record: RecordData, shelf_code: str | None) -> dict[str, Any]:
+    key = shelf_code or "_default"
+    return {
+        token: entry
+        for token, entry in record.box_layout.items()
+        if (entry.shelf_code or "_default") == key
+    }
+
+
 def compute_picking_metrics(y_true: list[bool], y_pred: list[bool]) -> PickingMetrics:
     tp = sum(1 for t, p in zip(y_true, y_pred) if t and p)
     fp = sum(1 for t, p in zip(y_true, y_pred) if not t and p)
@@ -173,7 +182,7 @@ def predict_record(
                 group.to_vector(model.frame_feature_names),
                 record_id=record.record_id,
                 frame_idx=frame.frame_idx,
-                box_layout=record.box_layout,
+                box_layout=_box_layout_for_shelf(record, group.shelf_code),
             )
             for group in reg.extract_frame_feature_groups_from_context(ctx)
         ]

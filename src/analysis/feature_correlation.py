@@ -1168,7 +1168,16 @@ def analyze_exported_feature_correlations(
     if not frame_feature_names:
         frame_feature_names = _infer_feature_names(
             frame_df,
-            {"record_id", "frame_idx", "is_picking", "target_layout_layer_norm", "target_layout_column_norm"},
+            {
+                "record_id",
+                "frame_idx",
+                "person_track_id",
+                "shelf_code",
+                "is_picking",
+                "target_layout_shelf_side",
+                "target_layout_layer_norm",
+                "target_layout_column_norm",
+            },
         )
     if not box_feature_names:
         box_feature_names = _infer_feature_names(

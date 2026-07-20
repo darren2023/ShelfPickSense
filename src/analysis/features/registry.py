@@ -53,33 +53,42 @@ class FeatureRegistry:
                     prefixes.add(prefix)
         return FeatureRegistry([ext for ext in self._extractors if ext.name in prefixes])
 
+    def _shelf_codes(self, ctx: FeatureContext) -> list[str]:
+        codes = sorted({box.shelf_code or "_default" for box in ctx.box_index.values()})
+        return codes or ["_default"]
+
     def extract_frame_feature_groups_from_context(self, ctx: FeatureContext) -> list[FeatureSet]:
         groups: list[FeatureSet] = []
-        for person in sorted_persons(ctx.frame):
-            track_id = person_track_id(person)
-            person_ctx = ctx.for_person(person, track_id)
-            features: dict[str, float] = {}
-            for ext in self._extractors:
-                for k, v in ext.extract_frame(person_ctx).items():
-                    features[f"{ext.name}.{k}"] = float(v)
-            groups.append(
-                FeatureSet(
-                    record_id=ctx.record.record_id,
-                    frame_idx=ctx.frame.frame_idx,
-                    person_track_id=track_id,
-                    features=features,
+        for shelf_code in self._shelf_codes(ctx):
+            shelf_ctx = ctx.for_shelf(shelf_code)
+            for person in sorted_persons(ctx.frame):
+                track_id = person_track_id(person)
+                person_ctx = shelf_ctx.for_person(person, track_id)
+                features: dict[str, float] = {}
+                for ext in self._extractors:
+                    for k, v in ext.extract_frame(person_ctx).items():
+                        features[f"{ext.name}.{k}"] = float(v)
+                groups.append(
+                    FeatureSet(
+                        record_id=ctx.record.record_id,
+                        frame_idx=ctx.frame.frame_idx,
+                        person_track_id=track_id,
+                        shelf_code=shelf_code,
+                        features=features,
+                    )
                 )
-            )
         return groups
 
     def extract_per_box_features_from_context(self, ctx: FeatureContext) -> list[PerBoxFeatureSet]:
         per_box: dict[str, dict[str, float]] = {}
-        for ext in self._extractors:
-            box_feats = ext.extract_per_box(ctx)
-            for token, feats in box_feats.items():
-                bucket = per_box.setdefault(token, {})
-                for k, v in feats.items():
-                    bucket[f"{ext.name}.{k}"] = float(v)
+        for shelf_code in self._shelf_codes(ctx):
+            shelf_ctx = ctx.for_shelf(shelf_code)
+            for ext in self._extractors:
+                box_feats = ext.extract_per_box(shelf_ctx)
+                for token, feats in box_feats.items():
+                    bucket = per_box.setdefault(token, {})
+                    for k, v in feats.items():
+                        bucket[f"{ext.name}.{k}"] = float(v)
 
         return [
             PerBoxFeatureSet(

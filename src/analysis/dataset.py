@@ -39,11 +39,37 @@ def _layout_target_from_label(record: RecordData, label) -> tuple[int, float, fl
     return entry.shelf_side, layer_norm, column_norm
 
 
+def _shelf_key(value: str | None) -> str:
+    return str(value or "_default")
+
+
+def _confirmed_tokens_for_shelf(record: RecordData, label, shelf_code: str | None) -> list[str]:
+    key = _shelf_key(shelf_code)
+    tokens: list[str] = []
+    for token in label.confirmed_box_tokens:
+        entry = record.box_layout.get(token)
+        if entry is not None and _shelf_key(entry.shelf_code) == key:
+            tokens.append(token)
+    return tokens
+
+
+def _layout_target_from_tokens(record: RecordData, tokens: list[str]) -> tuple[int, float, float]:
+    if not tokens:
+        return 0, 0.0, 0.0
+    entry = record.box_layout.get(tokens[0])
+    if entry is None:
+        return 0, 0.0, 0.0
+    stats = record.shelf_layout_stats.get(entry.shelf_code or "_default")
+    layer_norm, column_norm = normalized_layout_targets(entry, stats)
+    return entry.shelf_side, layer_norm, column_norm
+
+
 @dataclass
 class FrameSample:
     record_id: str
     frame_idx: int
     person_track_id: int | None
+    shelf_code: str | None
     x: np.ndarray
     is_picking: bool
     target_layout_shelf_side: int = 0
@@ -107,6 +133,10 @@ def save_dataset(dataset: Dataset, path: Path) -> None:
             ],
             dtype=np.int64,
         ),
+        frame_shelf_codes=np.asarray(
+            [sample.shelf_code or "" for sample in dataset.frame_samples],
+            dtype=str,
+        ),
         frame_x=frame_x,
         frame_is_picking=np.asarray([sample.is_picking for sample in dataset.frame_samples], dtype=bool),
         frame_target_layout_shelf_side=np.asarray(
@@ -159,6 +189,11 @@ def load_serialized_dataset(path: Path) -> Dataset:
                     None
                     if int(frame_person_track_ids[idx]) < 0
                     else int(frame_person_track_ids[idx])
+                ),
+                shelf_code=(
+                    str(data["frame_shelf_codes"][idx])
+                    if "frame_shelf_codes" in data and str(data["frame_shelf_codes"][idx])
+                    else None
                 ),
                 x=np.asarray(frame_x[idx], dtype=float),
                 is_picking=bool(data["frame_is_picking"][idx]),
@@ -257,23 +292,26 @@ def _extract_record_samples(
     for frame in frames:
         ctx = FeatureContext.from_record(record, frame, frame_index=frame_index)
         label = record.labels.label_for(frame.frame_idx)
-        target_side, target_layer_norm, target_col_norm = _layout_target_from_label(record, label)
         for frame_feat in registry.extract_frame_feature_groups_from_context(ctx):
+            shelf_tokens = _confirmed_tokens_for_shelf(record, label, frame_feat.shelf_code)
+            target_side, target_layer_norm, target_col_norm = _layout_target_from_tokens(record, shelf_tokens)
+            is_shelf_picking = bool(shelf_tokens) if label.confirmed_box_tokens else label.is_picking
             frame_samples.append(
                 FrameSample(
                     record_id=record.record_id,
                     frame_idx=frame.frame_idx,
                     person_track_id=frame_feat.person_track_id,
+                    shelf_code=frame_feat.shelf_code,
                     x=frame_feat.to_vector(frame_feature_names),
-                    is_picking=label.is_picking,
-                    target_layout_shelf_side=target_side if label.is_picking else 0,
-                    target_layout_layer_norm=target_layer_norm if label.is_picking else 0.0,
-                    target_layout_column_norm=target_col_norm if label.is_picking else 0.0,
+                    is_picking=is_shelf_picking,
+                    target_layout_shelf_side=target_side if is_shelf_picking else 0,
+                    target_layout_layer_norm=target_layer_norm if is_shelf_picking else 0.0,
+                    target_layout_column_norm=target_col_norm if is_shelf_picking else 0.0,
                 )
             )
 
         if label.is_picking:
-            confirmed_codes = set(label.confirmed_box_codes)
+            confirmed_tokens = set(label.confirmed_box_tokens)
             for pb in registry.extract_per_box_features_from_context(ctx):
                 layout_entry = record.box_layout.get(pb.box_token)
                 box_code = layout_entry.encode() if layout_entry else 0
@@ -294,7 +332,7 @@ def _extract_record_samples(
                         box_token=pb.box_token,
                         box_code=box_code,
                         x=pb.to_vector(box_feature_names),
-                        is_target=box_code in confirmed_codes,
+                        is_target=pb.box_token in confirmed_tokens,
                         target_layout_shelf_side=layout_entry.shelf_side if layout_entry else 0,
                         target_layout_layer_norm=layer_norm,
                         target_layout_column_norm=col_norm,
@@ -452,23 +490,26 @@ def build_dataset(
         for frame in frames:
             ctx = FeatureContext.from_record(record, frame, frame_index=frame_index)
             label = record.labels.label_for(frame.frame_idx)
-            target_side, target_layer_norm, target_col_norm = _layout_target_from_label(record, label)
             for frame_feat in reg.extract_frame_feature_groups_from_context(ctx):
+                shelf_tokens = _confirmed_tokens_for_shelf(record, label, frame_feat.shelf_code)
+                target_side, target_layer_norm, target_col_norm = _layout_target_from_tokens(record, shelf_tokens)
+                is_shelf_picking = bool(shelf_tokens) if label.confirmed_box_tokens else label.is_picking
                 frame_samples.append(
                     FrameSample(
                         record_id=record.record_id,
                         frame_idx=frame.frame_idx,
                         person_track_id=frame_feat.person_track_id,
+                        shelf_code=frame_feat.shelf_code,
                         x=frame_feat.to_vector(frame_feature_names),
-                        is_picking=label.is_picking,
-                        target_layout_shelf_side=target_side if label.is_picking else 0,
-                        target_layout_layer_norm=target_layer_norm if label.is_picking else 0.0,
-                        target_layout_column_norm=target_col_norm if label.is_picking else 0.0,
+                        is_picking=is_shelf_picking,
+                        target_layout_shelf_side=target_side if is_shelf_picking else 0,
+                        target_layout_layer_norm=target_layer_norm if is_shelf_picking else 0.0,
+                        target_layout_column_norm=target_col_norm if is_shelf_picking else 0.0,
                     )
                 )
 
             if label.is_picking:
-                confirmed_codes = set(label.confirmed_box_codes)
+                confirmed_tokens = set(label.confirmed_box_tokens)
                 for pb in reg.extract_per_box_features_from_context(ctx):
                     layout_entry = record.box_layout.get(pb.box_token)
                     box_code = layout_entry.encode() if layout_entry else 0
@@ -489,7 +530,7 @@ def build_dataset(
                             box_token=pb.box_token,
                             box_code=box_code,
                             x=pb.to_vector(box_feature_names),
-                            is_target=box_code in confirmed_codes,
+                            is_target=pb.box_token in confirmed_tokens,
                             target_layout_shelf_side=layout_entry.shelf_side if layout_entry else 0,
                             target_layout_layer_norm=layer_norm,
                             target_layout_column_norm=col_norm,
