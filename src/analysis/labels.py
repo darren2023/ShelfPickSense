@@ -35,6 +35,7 @@ class FrameLabel:
     is_picking: bool = False
     confirmed_box_tokens: list[str] = field(default_factory=list)
     confirmed_box_codes: list[int] = field(default_factory=list)
+    picking_person_track_ids: list[int] = field(default_factory=list)
 
 
 @dataclass
@@ -47,7 +48,32 @@ class RecordLabels:
     def label_for(self, frame_idx: int) -> FrameLabel:
         if frame_idx in self.frame_labels:
             return self.frame_labels[frame_idx]
-        return FrameLabel(frame_idx=frame_idx, is_picking=False, confirmed_box_tokens=[], confirmed_box_codes=[])
+        return FrameLabel(
+            frame_idx=frame_idx,
+            is_picking=False,
+            confirmed_box_tokens=[],
+            confirmed_box_codes=[],
+            picking_person_track_ids=[],
+        )
+
+
+def extract_picking_person_track_ids(entry: dict[str, Any]) -> list[int]:
+    raw_values: list[Any] = []
+    if isinstance(entry.get("person_track_ids"), list):
+        raw_values.extend(entry["person_track_ids"])
+    if entry.get("person_track_id") is not None:
+        raw_values.append(entry.get("person_track_id"))
+    person = entry.get("person")
+    if isinstance(person, dict) and person.get("person_track_id") is not None:
+        raw_values.append(person.get("person_track_id"))
+
+    out: list[int] = []
+    for raw in raw_values:
+        try:
+            out.append(int(raw))
+        except (TypeError, ValueError):
+            continue
+    return list(dict.fromkeys(out))
 
 
 def load_event_review(path: Path) -> dict[str, Any]:
@@ -84,11 +110,14 @@ def build_labels_from_event_review(
         if frame_idx < 0:
             continue
         confirmed = extract_confirmed_box_tokens(item)
-        labels.frame_labels[frame_idx] = FrameLabel(
-            frame_idx=frame_idx,
-            is_picking=True,
-            confirmed_box_tokens=confirmed,
-        )
+        track_ids = extract_picking_person_track_ids(item)
+        label = labels.frame_labels.get(frame_idx)
+        if label is None:
+            label = FrameLabel(frame_idx=frame_idx)
+            labels.frame_labels[frame_idx] = label
+        label.is_picking = True
+        label.confirmed_box_tokens = list(dict.fromkeys([*label.confirmed_box_tokens, *confirmed]))
+        label.picking_person_track_ids = list(dict.fromkeys([*label.picking_person_track_ids, *track_ids]))
     return labels
 
 

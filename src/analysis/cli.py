@@ -495,6 +495,16 @@ def _cmd_viz_frames(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_viz_feature_curves(args: argparse.Namespace) -> int:
+    from analysis.feature_curves_viz import write_feature_curves_html
+
+    features_dir = Path(args.features_dir)
+    output_path = Path(args.output) if args.output else None
+    out = write_feature_curves_html(features_dir, output_path)
+    logger.info("feature curves html generated: {}", out.resolve())
+    return 0
+
+
 def _cmd_compare(args: argparse.Namespace) -> int:
     from analysis.evaluation import BoxMetrics, ModelEvaluation, PickingMetrics
 
@@ -1195,6 +1205,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_logging_args(p_viz)
     p_viz.set_defaults(func=_cmd_viz_frames)
+
+    p_feature_curves = sub.add_parser("viz-feature-curves", help="generate feature curve HTML from frame_features.parquet")
+    p_feature_curves.add_argument("--features-dir", required=True, help="export-features output directory")
+    p_feature_curves.add_argument("--output", default="", help="output HTML path, default: features-dir/feature_curves.html")
+    _add_logging_args(p_feature_curves)
+    p_feature_curves.set_defaults(func=_cmd_viz_feature_curves)
 
     p_box_layout = sub.add_parser("box-layout", help="读取 annotation 并输出各货框数值布局")
     source_group = p_box_layout.add_mutually_exclusive_group(required=True)
