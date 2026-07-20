@@ -17,6 +17,15 @@ def extract_confirmed_box_tokens(entry: dict[str, Any]) -> list[str]:
         if tokens:
             return tokens
     single = str(entry.get("confirmed_box_token") or "").strip()
+    if single:
+        return [single]
+
+    raw_list = entry.get("box_tokens")
+    if isinstance(raw_list, list):
+        tokens = [str(t).strip() for t in raw_list if str(t).strip()]
+        if tokens:
+            return tokens
+    single = str(entry.get("box_token") or "").strip()
     return [single] if single else []
 
 

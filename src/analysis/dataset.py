@@ -295,7 +295,7 @@ def _extract_record_samples(
         for frame_feat in registry.extract_frame_feature_groups_from_context(ctx):
             shelf_tokens = _confirmed_tokens_for_shelf(record, label, frame_feat.shelf_code)
             target_side, target_layer_norm, target_col_norm = _layout_target_from_tokens(record, shelf_tokens)
-            is_shelf_picking = bool(shelf_tokens) if label.confirmed_box_tokens else label.is_picking
+            is_shelf_picking = bool(shelf_tokens)
             frame_samples.append(
                 FrameSample(
                     record_id=record.record_id,
@@ -493,7 +493,7 @@ def build_dataset(
             for frame_feat in reg.extract_frame_feature_groups_from_context(ctx):
                 shelf_tokens = _confirmed_tokens_for_shelf(record, label, frame_feat.shelf_code)
                 target_side, target_layer_norm, target_col_norm = _layout_target_from_tokens(record, shelf_tokens)
-                is_shelf_picking = bool(shelf_tokens) if label.confirmed_box_tokens else label.is_picking
+                is_shelf_picking = bool(shelf_tokens)
                 frame_samples.append(
                     FrameSample(
                         record_id=record.record_id,

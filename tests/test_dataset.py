@@ -112,7 +112,7 @@ def test_build_dataset_extracts_person_by_shelf_samples(tmp_path: Path):
             {
                 "event_type": "collision",
                 "frame_idx": 1,
-                "confirmed_box_tokens": ["S1:A1"],
+                "box_tokens": ["S1:A1"],
             }
         ],
     }
