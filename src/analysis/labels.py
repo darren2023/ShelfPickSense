@@ -20,13 +20,23 @@ def extract_confirmed_box_tokens(entry: dict[str, Any]) -> list[str]:
     if single:
         return [single]
 
-    raw_list = entry.get("box_tokens")
-    if isinstance(raw_list, list):
-        tokens = [str(t).strip() for t in raw_list if str(t).strip()]
-        if tokens:
-            return tokens
+    for key in ("tokens", "box_tokens"):
+        raw_list = entry.get(key)
+        if isinstance(raw_list, list):
+            tokens = [str(t).strip() for t in raw_list if str(t).strip()]
+            if tokens:
+                return tokens
     single = str(entry.get("box_token") or "").strip()
-    return [single] if single else []
+    if single:
+        return [single]
+    single = str(entry.get("token") or "").strip()
+    if single:
+        return [single]
+    shelf_code = str(entry.get("shelf_code") or "").strip()
+    box_id = str(entry.get("box_id") or "").strip()
+    if shelf_code and box_id:
+        return [f"{shelf_code}:{box_id}"]
+    return [box_id] if box_id else []
 
 
 @dataclass

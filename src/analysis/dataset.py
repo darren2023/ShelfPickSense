@@ -64,6 +64,13 @@ def _layout_target_from_tokens(record: RecordData, tokens: list[str]) -> tuple[i
     return entry.shelf_side, layer_norm, column_norm
 
 
+def _is_person_pick_label(label, person_track_id: int | None) -> bool:
+    track_ids = getattr(label, "picking_person_track_ids", []) or []
+    if not track_ids:
+        return True
+    return person_track_id is not None and int(person_track_id) in set(int(v) for v in track_ids)
+
+
 @dataclass
 class FrameSample:
     record_id: str
@@ -295,7 +302,7 @@ def _extract_record_samples(
         for frame_feat in registry.extract_frame_feature_groups_from_context(ctx):
             shelf_tokens = _confirmed_tokens_for_shelf(record, label, frame_feat.shelf_code)
             target_side, target_layer_norm, target_col_norm = _layout_target_from_tokens(record, shelf_tokens)
-            is_shelf_picking = bool(shelf_tokens)
+            is_shelf_picking = bool(shelf_tokens) and _is_person_pick_label(label, frame_feat.person_track_id)
             frame_samples.append(
                 FrameSample(
                     record_id=record.record_id,
@@ -493,7 +500,7 @@ def build_dataset(
             for frame_feat in reg.extract_frame_feature_groups_from_context(ctx):
                 shelf_tokens = _confirmed_tokens_for_shelf(record, label, frame_feat.shelf_code)
                 target_side, target_layer_norm, target_col_norm = _layout_target_from_tokens(record, shelf_tokens)
-                is_shelf_picking = bool(shelf_tokens)
+                is_shelf_picking = bool(shelf_tokens) and _is_person_pick_label(label, frame_feat.person_track_id)
                 frame_samples.append(
                     FrameSample(
                         record_id=record.record_id,
