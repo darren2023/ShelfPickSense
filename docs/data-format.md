@@ -5,6 +5,7 @@
 ```text
 record_xxx/
   annotation.json
+  annotation_v2.json  # 可选，存在时优先于 annotation.json
   skeleton.parquet
   event_review.json   # 可选
 ```
@@ -28,6 +29,18 @@ record_xxx/
 
 - 有 `shelf_code` 时：`<shelf_code>:<box_id>`
 - 无 `shelf_code` 时：`Box_<box_id>`
+
+旧版 annotation 可能使用顶层 `boxes[]`、`shelf_corners`、`grid_shape`。可用升级脚本转换为 `shelves[]` 格式：
+
+```powershell
+uv run python scripts/upgrade_annotation_json.py --data-dir .\data\data28-merged\data28-merged\Train\record_026
+```
+
+默认会在记录目录生成 `annotation_v2.json`，加载记录时会优先使用该文件。确认无误后也可以覆盖原文件并备份：
+
+```powershell
+uv run python scripts/upgrade_annotation_json.py --data-dir .\data\data28-merged\data28-merged\Train --in-place
+```
 
 示例：
 
@@ -79,7 +92,7 @@ COCO17 中与当前特征强相关的关键点：
 - `verified_true`：人工确认的取货事件列表。
 - `verified_true[].frame_idx`：取货事件所在帧。
 - `verified_true[].is_pick`：必须为 `true`。
-- `verified_true[].shelf_code` / `verified_true[].box_id`：目标货框，可推导出 canonical token。
+- `verified_true[].shelf_code` / `verified_true[].box_id`：目标货框，可推导出 canonical token，二者都必须非空。
 - `verified_true[].person_track_id`：取货人 track id。
 
 示例：

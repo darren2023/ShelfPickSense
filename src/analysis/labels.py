@@ -47,15 +47,19 @@ def validate_event_review_v2(event_review: dict[str, Any] | None, *, record_id: 
             )
         if item.get("is_pick") is not True:
             raise ReviewSchemaError(
-                f"{_upgrade_message(record_id)} Each verified_true event must include is_pick=true."
+                f"event_review schema v2 for record={record_id} is invalid. "
+                "Each verified_true event must include is_pick=true."
             )
         if not str(item.get("shelf_code") or "").strip() or not str(item.get("box_id") or "").strip():
             raise ReviewSchemaError(
-                f"{_upgrade_message(record_id)} Each verified_true event must include shelf_code and box_id."
+                f"event_review schema v2 for record={record_id} is invalid. "
+                "Each verified_true event must include non-empty shelf_code and box_id. "
+                "Please fix or regenerate event_review_v2.json."
             )
         if item.get("person_track_id") is None:
             raise ReviewSchemaError(
-                f"{_upgrade_message(record_id)} Each verified_true event must include person_track_id."
+                f"event_review schema v2 for record={record_id} is invalid. "
+                "Each verified_true event must include person_track_id."
             )
 
 

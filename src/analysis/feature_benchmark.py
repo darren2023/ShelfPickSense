@@ -25,7 +25,7 @@ from analysis.train import TrainResult
 from analysis.features.selection import FeatureSelection, load_feature_selection
 from analysis.models import SUPPORTED_MODEL_NAMES
 from analysis.records import discover_record_dirs, load_all_records
-from analysis.constants import ANNOTATION_FILE, EVENT_REVIEW_FILE, SKELETON_FILE
+from analysis.constants import ANNOTATION_FILE, ANNOTATION_V2_FILE, EVENT_REVIEW_FILE, EVENT_REVIEW_V2_FILE, SKELETON_FILE
 from analysis.rule_baseline import RULE_COLLISION_BASELINE_NAME, run_external_collision_baseline
 
 
@@ -207,11 +207,13 @@ def _feature_cache_signature(
                 "record_dir": str(record_dir.resolve()),
                 "skeleton": _file_fingerprint(record_dir / SKELETON_FILE),
                 "annotation": _file_fingerprint(record_dir / ANNOTATION_FILE),
+                "annotation_v2": _file_fingerprint(record_dir / ANNOTATION_V2_FILE),
                 "event_review": _file_fingerprint(record_dir / EVENT_REVIEW_FILE),
+                "event_review_v2": _file_fingerprint(record_dir / EVENT_REVIEW_V2_FILE),
             }
         )
     return {
-        "version": 6,
+        "version": 7,
         "train_data_dir": str(Path(train_data_dir).resolve()),
         "feature_selection": feature_selection.to_dict() if feature_selection else None,
         "feature_frame_stride": max(1, int(feature_frame_stride or 1)),

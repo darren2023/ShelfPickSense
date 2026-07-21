@@ -13,9 +13,11 @@ from analysis.annotation import BoxInfo, annotation_size, build_box_index, load_
 from analysis.box_layout import BoxNumericCode, ShelfLayoutStats, build_box_layout, compute_shelf_layout_stats
 from analysis.constants import (
     ANNOTATION_FILE,
+    ANNOTATION_V2_FILE,
     DEFAULT_POSE_INFER_HEIGHT,
     DEFAULT_POSE_INFER_WIDTH,
     EVENT_REVIEW_FILE,
+    EVENT_REVIEW_V2_FILE,
     MANIFEST_FILE,
     SKELETON_FILE,
 )
@@ -208,9 +210,12 @@ def load_record(record_dir: Path, *, validate_review_schema: bool = True) -> Rec
 
     skeleton_path = record_dir / SKELETON_FILE
     skeleton = pd.read_parquet(skeleton_path)
-    annotation = load_annotation(record_dir / ANNOTATION_FILE)
+    annotation_v2_path = record_dir / ANNOTATION_V2_FILE
+    annotation_path = annotation_v2_path if annotation_v2_path.is_file() else record_dir / ANNOTATION_FILE
+    annotation = load_annotation(annotation_path)
 
-    event_review_path = record_dir / EVENT_REVIEW_FILE
+    event_review_v2_path = record_dir / EVENT_REVIEW_V2_FILE
+    event_review_path = event_review_v2_path if event_review_v2_path.is_file() else record_dir / EVENT_REVIEW_FILE
     event_review = load_event_review(event_review_path) if event_review_path.is_file() else None
 
     infer_w, infer_h = resolve_infer_frame_size(record_dir, skeleton, annotation)

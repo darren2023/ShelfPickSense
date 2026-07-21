@@ -184,6 +184,76 @@ def test_old_event_review_schema_requires_upgrade(tmp_path: Path):
         load_record(record_dir)
 
 
+def test_event_review_v2_file_takes_precedence_over_legacy_review(tmp_path: Path):
+    import json
+
+    import pandas as pd
+
+    from analysis.records import load_record
+    from fixtures import _skeleton_row
+
+    record_dir = tmp_path / "record_001"
+    record_dir.mkdir(parents=True, exist_ok=True)
+    annotation = {
+        "annotation_size": {"width": 640, "height": 480},
+        "shelves": [
+            {
+                "shelf_code": "S1",
+                "boxes": [
+                    {
+                        "box_id": "A1",
+                        "shelf_code": "S1",
+                        "video_polygon": [[100, 100], [200, 100], [200, 200], [100, 200]],
+                    }
+                ],
+            }
+        ],
+    }
+    (record_dir / "annotation.json").write_text(json.dumps(annotation, ensure_ascii=False), encoding="utf-8")
+    pd.DataFrame([_skeleton_row(1, left_wrist=(150, 150), right_wrist=(160, 155))]).to_parquet(
+        record_dir / "skeleton.parquet",
+        index=False,
+    )
+    (record_dir / "event_review.json").write_text(
+        json.dumps(
+            {
+                "schema": 1,
+                "verified_true": [
+                    {"event_type": "collision", "frame_idx": 1, "box_tokens": ["S1:A1"]},
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (record_dir / "event_review_v2.json").write_text(
+        json.dumps(
+            {
+                "schema": 2,
+                "verified_true": [
+                    {
+                        "event_type": "collision",
+                        "frame_idx": 1,
+                        "is_pick": True,
+                        "person_track_id": 1,
+                        "shelf_code": "S1",
+                        "box_id": "A1",
+                    },
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    record = load_record(record_dir)
+
+    label = record.labels.frame_labels[1]
+    assert label.is_picking
+    assert label.confirmed_box_tokens == ["S1:A1"]
+    assert label.picking_person_track_ids == [1]
+
+
 def test_keep_empty_skeleton_frames_option(tmp_path: Path):
     from analysis.train import train_model
 
