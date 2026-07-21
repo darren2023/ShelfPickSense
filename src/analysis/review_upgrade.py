@@ -232,7 +232,7 @@ def upgrade_record_review(
     in_place: bool = False,
     backup: bool = True,
 ) -> UpgradeStats:
-    record = load_record(record_dir)
+    record = load_record(record_dir, validate_review_schema=False)
     input_path = record.record_dir / review_filename
     if not input_path.is_file():
         raise FileNotFoundError(f"未找到 {EVENT_REVIEW_FILE}: {input_path}")

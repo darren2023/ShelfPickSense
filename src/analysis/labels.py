@@ -10,33 +10,61 @@ from typing import Any
 from analysis.box_layout import BoxNumericCode, resolve_layout_token
 
 
-def extract_confirmed_box_tokens(entry: dict[str, Any]) -> list[str]:
-    raw_list = entry.get("confirmed_box_tokens")
-    if isinstance(raw_list, list):
-        tokens = [str(t).strip() for t in raw_list if str(t).strip()]
-        if tokens:
-            return tokens
-    single = str(entry.get("confirmed_box_token") or "").strip()
-    if single:
-        return [single]
+LEGACY_REVIEW_FIELDS = {
+    "confirmed_box_tokens",
+    "confirmed_box_token",
+    "tokens",
+    "box_tokens",
+    "box_token",
+    "token",
+}
 
-    for key in ("tokens", "box_tokens"):
-        raw_list = entry.get(key)
-        if isinstance(raw_list, list):
-            tokens = [str(t).strip() for t in raw_list if str(t).strip()]
-            if tokens:
-                return tokens
-    single = str(entry.get("box_token") or "").strip()
-    if single:
-        return [single]
-    single = str(entry.get("token") or "").strip()
-    if single:
-        return [single]
+
+class ReviewSchemaError(ValueError):
+    """Raised when event_review.json is not in the supported v2 schema."""
+
+
+def _upgrade_message(record_id: str) -> str:
+    return (
+        f"event_review.json for record={record_id} uses an unsupported old schema. "
+        "Please upgrade review annotations to schema v2 before feature extraction/training "
+        "(use the review upgrade script/module, e.g. analysis.review_upgrade)."
+    )
+
+
+def validate_event_review_v2(event_review: dict[str, Any] | None, *, record_id: str) -> None:
+    if not event_review:
+        return
+    if int(event_review.get("schema") or 0) != 2:
+        raise ReviewSchemaError(_upgrade_message(record_id))
+    for item in event_review.get("verified_true") or []:
+        if not isinstance(item, dict):
+            continue
+        legacy = sorted(LEGACY_REVIEW_FIELDS & set(item))
+        if legacy:
+            raise ReviewSchemaError(
+                f"{_upgrade_message(record_id)} Legacy fields found: {', '.join(legacy)}"
+            )
+        if item.get("is_pick") is not True:
+            raise ReviewSchemaError(
+                f"{_upgrade_message(record_id)} Each verified_true event must include is_pick=true."
+            )
+        if not str(item.get("shelf_code") or "").strip() or not str(item.get("box_id") or "").strip():
+            raise ReviewSchemaError(
+                f"{_upgrade_message(record_id)} Each verified_true event must include shelf_code and box_id."
+            )
+        if item.get("person_track_id") is None:
+            raise ReviewSchemaError(
+                f"{_upgrade_message(record_id)} Each verified_true event must include person_track_id."
+            )
+
+
+def extract_confirmed_box_tokens(entry: dict[str, Any]) -> list[str]:
     shelf_code = str(entry.get("shelf_code") or "").strip()
     box_id = str(entry.get("box_id") or "").strip()
     if shelf_code and box_id:
         return [f"{shelf_code}:{box_id}"]
-    return [box_id] if box_id else []
+    return []
 
 
 @dataclass
@@ -109,6 +137,7 @@ def build_labels_from_event_review(
 
     if not event_review:
         return labels
+    validate_event_review_v2(event_review, record_id=record_id)
 
     for item in event_review.get("verified_true") or []:
         if not isinstance(item, dict):

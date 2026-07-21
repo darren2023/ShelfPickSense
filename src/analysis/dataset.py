@@ -292,7 +292,6 @@ def _extract_record_samples(
     frame_stride: int,
 ) -> _RecordExtractionResult:
     frame_samples: list[FrameSample] = []
-    box_samples: list[BoxSample] = []
     frames = _stride_frames(record.frames(), frame_stride)
     frame_index = record.frame_index()
 
@@ -317,41 +316,12 @@ def _extract_record_samples(
                 )
             )
 
-        if label.is_picking:
-            confirmed_tokens = set(label.confirmed_box_tokens)
-            for pb in registry.extract_per_box_features_from_context(ctx):
-                layout_entry = record.box_layout.get(pb.box_token)
-                box_code = layout_entry.encode() if layout_entry else 0
-                box_stats = (
-                    record.shelf_layout_stats.get(layout_entry.shelf_code or "_default")
-                    if layout_entry
-                    else None
-                )
-                layer_norm, col_norm = (
-                    normalized_layout_targets(layout_entry, box_stats)
-                    if layout_entry
-                    else (0.0, 0.0)
-                )
-                box_samples.append(
-                    BoxSample(
-                        record_id=record.record_id,
-                        frame_idx=frame.frame_idx,
-                        box_token=pb.box_token,
-                        box_code=box_code,
-                        x=pb.to_vector(box_feature_names),
-                        is_target=pb.box_token in confirmed_tokens,
-                        target_layout_shelf_side=layout_entry.shelf_side if layout_entry else 0,
-                        target_layout_layer_norm=layer_norm,
-                        target_layout_column_norm=col_norm,
-                    )
-                )
-
     return _RecordExtractionResult(
         record_index=record_index,
         record_id=record.record_id,
         frame_count=len(frames),
         frame_samples=frame_samples,
-        box_samples=box_samples,
+        box_samples=[],
     )
 
 
@@ -417,13 +387,10 @@ def build_dataset(
     )
 
     frame_feature_names = reg.frame_feature_names()
-    box_feature_names = reg.per_box_schema_feature_names()
     if feature_selection:
         frame_feature_names = feature_selection.select_frame(frame_feature_names)
-        box_feature_names = feature_selection.select_box(box_feature_names)
         reg = reg.select_extractors_for_features(
             frame_feature_names=frame_feature_names,
-            box_feature_names=box_feature_names,
         )
 
     workers = max(1, int(feature_jobs or 1))
@@ -462,12 +429,11 @@ def build_dataset(
                 )
         for result in sorted(results, key=lambda item: item.record_index):
             frame_samples.extend(result.frame_samples)
-            box_samples.extend(result.box_samples)
         dataset = Dataset(
             frame_samples=frame_samples,
-            box_samples=box_samples,
+            box_samples=[],
             frame_feature_names=frame_feature_names,
-            box_feature_names=box_feature_names,
+            box_feature_names=[],
         )
         if filter_empty_skeleton:
             dataset, _ = filter_empty_skeleton_frames(dataset, records)
@@ -514,35 +480,6 @@ def build_dataset(
                         target_layout_column_norm=target_col_norm if is_shelf_picking else 0.0,
                     )
                 )
-
-            if label.is_picking:
-                confirmed_tokens = set(label.confirmed_box_tokens)
-                for pb in reg.extract_per_box_features_from_context(ctx):
-                    layout_entry = record.box_layout.get(pb.box_token)
-                    box_code = layout_entry.encode() if layout_entry else 0
-                    box_stats = (
-                        record.shelf_layout_stats.get(layout_entry.shelf_code or "_default")
-                        if layout_entry
-                        else None
-                    )
-                    layer_norm, col_norm = (
-                        normalized_layout_targets(layout_entry, box_stats)
-                        if layout_entry
-                        else (0.0, 0.0)
-                    )
-                    box_samples.append(
-                        BoxSample(
-                            record_id=record.record_id,
-                            frame_idx=frame.frame_idx,
-                            box_token=pb.box_token,
-                            box_code=box_code,
-                            x=pb.to_vector(box_feature_names),
-                            is_target=pb.box_token in confirmed_tokens,
-                            target_layout_shelf_side=layout_entry.shelf_side if layout_entry else 0,
-                            target_layout_layer_norm=layer_norm,
-                            target_layout_column_norm=col_norm,
-                        )
-                    )
 
             processed_frames += 1
             if processed_frames == total_frames or processed_frames % log_interval == 0:

@@ -672,41 +672,20 @@ def _cmd_export_features(args: argparse.Namespace) -> int:
         row.update(dict(zip(dataset.frame_feature_names, sample.x.tolist(), strict=True)))
         frame_rows.append(row)
 
-    box_rows = []
-    for sample in dataset.box_samples:
-        row = {
-            "record_id": sample.record_id,
-            "frame_idx": sample.frame_idx,
-            "box_token": sample.box_token,
-            "box_code": sample.box_code,
-            "is_target": sample.is_target,
-            "target_layout_shelf_side": sample.target_layout_shelf_side,
-            "target_layout_layer_norm": sample.target_layout_layer_norm,
-            "target_layout_column_norm": sample.target_layout_column_norm,
-        }
-        row.update(dict(zip(dataset.box_feature_names, sample.x.tolist(), strict=True)))
-        box_rows.append(row)
-
     frame_df = pd.DataFrame(frame_rows)
-    box_df = pd.DataFrame(box_rows)
     formats = ["parquet", "csv", "jsonl"] if args.format == "all" else [args.format]
     output_files: dict[str, dict[str, str]] = {}
 
     for output_format in formats:
         frame_path = out_dir / f"frame_features.{output_format}"
-        box_path = out_dir / f"box_features.{output_format}"
         if output_format == "parquet":
             frame_df.to_parquet(frame_path, index=False)
-            box_df.to_parquet(box_path, index=False)
         elif output_format == "csv":
             pd.DataFrame(_json_safe_rows(frame_rows)).to_csv(frame_path, index=False, encoding="utf-8-sig")
-            pd.DataFrame(_json_safe_rows(box_rows)).to_csv(box_path, index=False, encoding="utf-8-sig")
         elif output_format == "jsonl":
             _write_jsonl(frame_path, frame_rows)
-            _write_jsonl(box_path, box_rows)
         output_files[output_format] = {
             "frame_features_path": str(frame_path),
-            "box_features_path": str(box_path),
         }
 
     meta_path = out_dir / "features_meta.json"
@@ -718,11 +697,10 @@ def _cmd_export_features(args: argparse.Namespace) -> int:
         "output_format": args.format,
         "output_files": output_files,
         "frame_features_path": output_files[primary_format]["frame_features_path"],
-        "box_features_path": output_files[primary_format]["box_features_path"],
         "frame_count": len(dataset.frame_samples),
-        "box_sample_count": len(dataset.box_samples),
+        "box_sample_count": 0,
         "frame_feature_names": dataset.frame_feature_names,
-        "box_feature_names": dataset.box_feature_names,
+        "box_feature_names": [],
         "feature_selection": feature_selection.to_dict() if feature_selection else None,
         "feature_frame_stride": args.feature_frame_stride,
     }
@@ -737,7 +715,6 @@ def _cmd_export_features(args: argparse.Namespace) -> int:
     _log_json(meta)
     for output_format, paths in output_files.items():
         logger.info("{} 帧级特征已保存: {}", output_format, paths["frame_features_path"])
-        logger.info("{} 货框特征已保存: {}", output_format, paths["box_features_path"])
     logger.info("特征元数据已保存: {}", meta_path)
     return 0
 

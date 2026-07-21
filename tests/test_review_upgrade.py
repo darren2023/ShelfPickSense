@@ -54,7 +54,7 @@ def test_upgrade_review_assigns_nearest_person(tmp_path: Path):
     from analysis.records import load_record
     from analysis.review_upgrade import upgrade_review_payload
 
-    record = load_record(_write_multi_person_record(tmp_path / "record_001"))
+    record = load_record(_write_multi_person_record(tmp_path / "record_001"), validate_review_schema=False)
     upgraded, stats = upgrade_review_payload(record, record.event_review or {})
 
     event = upgraded["verified_true"][0]
@@ -79,7 +79,7 @@ def test_upgrade_review_prefers_alarm_for_duplicate_frame(tmp_path: Path):
     from analysis.records import load_record
     from analysis.review_upgrade import upgrade_review_payload
 
-    record = load_record(_write_multi_person_record(tmp_path / "record_001"))
+    record = load_record(_write_multi_person_record(tmp_path / "record_001"), validate_review_schema=False)
     review = {
         "schema": 1,
         "verified_true": [
@@ -120,7 +120,7 @@ def test_upgrade_review_uses_confirmed_token_for_person_selection(tmp_path: Path
             }
         ],
     }
-    record = load_record(record_dir)
+    record = load_record(record_dir, validate_review_schema=False)
 
     upgraded, _stats = upgrade_review_payload(record, review)
 

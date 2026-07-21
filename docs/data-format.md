@@ -20,16 +20,16 @@ record_xxx/
 - `video_polygon`：货框多边形坐标。
 - `video_polygon_norm`：可选，归一化多边形坐标。
 - `annotation_size.width / height`：标注坐标尺寸。
-- `video_polygon_norm`：相对 `annotation_size` 的归一化坐标（0~1），缩放货框时优先使用。
+- `video_polygon_norm`：相对 `annotation_size` 的归一化坐标，缩放货框时优先使用。
 
-货框坐标会按 pose 推理尺寸（默认 852×480，与 640×360 标注及 skeleton 坐标系一致）变换。记录目录若有 `manifest.json`，优先读取其中的 `infer_width` / `infer_height`。
+货框坐标会按 pose 推理尺寸变换。默认推理尺寸为 `852x480`，与 `640x360` 标注下的 skeleton 坐标系一致。记录目录若包含 `manifest.json`，会优先读取其中的 `infer_width` / `infer_height`。
 
 货框 token 规则与采集项目保持一致：
 
 - 有 `shelf_code` 时：`<shelf_code>:<box_id>`
 - 无 `shelf_code` 时：`Box_<box_id>`
 
-例如：
+示例：
 
 ```json
 {
@@ -50,7 +50,7 @@ record_xxx/
 
 ## skeleton.parquet
 
-`skeleton.parquet` 是逐帧人体骨骼数据。每行表示一帧中的一个人。
+`skeleton.parquet` 是逐帧人体骨架数据。每行表示一帧中的一个人。
 
 常用字段：
 
@@ -67,28 +67,35 @@ COCO17 中与当前特征强相关的关键点：
 - `kpt_5 / kpt_6`：左右肩。
 - `kpt_9 / kpt_10`：左右手腕。
 
-若某帧在 `skeleton.parquet` 中无有效关键点（全为空或置信度过低），训练时会默认过滤该帧；导出特征与评测仍保留这些帧。
+如果某帧在 `skeleton.parquet` 中无有效关键点（全为空或置信度过低），训练时默认会过滤该帧；导出特征与评测仍会保留这些帧。
 
 ## event_review.json
 
-`event_review.json` 是人工复核结果，用于构建监督信号。
+`event_review.json` 是人工复核结果，用于构建监督信号。当前特征提取和训练只支持 `schema: 2`。
 
 核心字段：
 
+- `schema`：必须为 `2`。
 - `verified_true`：人工确认的取货事件列表。
 - `verified_true[].frame_idx`：取货事件所在帧。
-- `verified_true[].confirmed_box_tokens`：人工确认的取货货框 token 列表。
+- `verified_true[].is_pick`：必须为 `true`。
+- `verified_true[].shelf_code` / `verified_true[].box_id`：目标货框，可推导出 canonical token。
+- `verified_true[].person_track_id`：取货人 track id。
 
 示例：
 
 ```json
 {
+  "schema": 2,
+  "status": "completed",
   "verified_true": [
     {
       "event_type": "collision",
       "frame_idx": 120,
-      "box_tokens": ["S1:A1"],
-      "confirmed_box_tokens": ["S1:A1"]
+      "is_pick": true,
+      "person_track_id": 2,
+      "shelf_code": "S1",
+      "box_id": "A1"
     }
   ]
 }
@@ -98,4 +105,4 @@ COCO17 中与当前特征强相关的关键点：
 
 - 如果没有 `event_review.json`，则该记录所有帧都视为非取货。
 - 如果某帧不在 `verified_true` 中，则该帧视为非取货。
-- 如果 `confirmed_box_tokens` 缺失，该帧仍可作为取货帧，但货框识别评测不会把它作为有效货框真值。
+- 旧版字段 `tokens`、`box_tokens`、`token`、`box_token`、`confirmed_box_tokens`、`confirmed_box_token` 已不再被特征提取支持；遇到旧格式会报错并要求先升级 review 文件。

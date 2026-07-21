@@ -120,11 +120,13 @@ def test_normalize_layout_layer_column():
         normalize_layout_layer,
     )
 
-    assert normalize_layout_layer(1, 4) == pytest.approx(0.2)
-    assert normalize_layout_layer(4, 4) == pytest.approx(0.8)
-    assert normalize_layout_column(2, 4) == pytest.approx(0.4)
-    assert denormalize_layout_layer(0.8, 4) == 4
-    assert denormalize_layout_column(0.4, 4) == 2
+    assert normalize_layout_layer(1, 4) == pytest.approx(0.125)
+    assert normalize_layout_layer(4, 4) == pytest.approx(0.875)
+    assert normalize_layout_column(2, 4) == pytest.approx(0.375)
+    assert denormalize_layout_layer(0.125, 4) == 1
+    assert denormalize_layout_layer(0.25, 4) == 2
+    assert denormalize_layout_layer(0.875, 4) == 4
+    assert denormalize_layout_column(0.375, 4) == 2
 
 
 def test_two_shelf_side_layer_column_rules():
@@ -307,10 +309,6 @@ def test_load_record_enriches_box_codes(tmp_path: Path):
     from fixtures import make_fixture_record
 
     record_dir = make_fixture_record(tmp_path / "record_box_codes")
-    review = json.loads((record_dir / "event_review.json").read_text(encoding="utf-8"))
-    review["verified_true"][0]["confirmed_box_tokens"] = ["Box_A1"]
-    (record_dir / "event_review.json").write_text(json.dumps(review, ensure_ascii=False), encoding="utf-8")
-
     record = load_record(record_dir)
     label = record.labels.frame_labels[6]
     assert label.confirmed_box_tokens == ["S1:A1"]

@@ -342,31 +342,21 @@ def test_cli_export_features(fixture_data_dir: Path, tmp_path: Path):
 
     assert ret == 0
     frame_path = output_dir / "frame_features.parquet"
-    box_path = output_dir / "box_features.parquet"
     meta_path = output_dir / "features_meta.json"
     assert frame_path.is_file()
-    assert box_path.is_file()
+    assert not (output_dir / "box_features.parquet").exists()
     assert meta_path.is_file()
 
     meta = json.loads(meta_path.read_text(encoding="utf-8"))
     assert meta["frame_count"] == 10
-    assert meta["box_sample_count"] == 6
+    assert meta["box_sample_count"] == 0
     assert meta["frame_feature_names"]
-    assert meta["box_feature_names"]
+    assert meta["box_feature_names"] == []
 
     frame_df = pd.read_parquet(frame_path)
-    box_df = pd.read_parquet(box_path)
     assert len(frame_df) == 10
-    assert len(box_df) == 6
     assert {"record_id", "frame_idx", "is_picking"} <= set(frame_df.columns)
     assert {"target_layout_layer_norm", "target_layout_column_norm", "target_layout_shelf_side"} <= set(frame_df.columns)
-    assert {"record_id", "frame_idx", "box_token", "is_target"} <= set(box_df.columns)
-    assert {"target_layout_layer_norm", "target_layout_column_norm", "target_layout_shelf_side"} <= set(box_df.columns)
-    assert "layout.shelf_side" in box_df.columns
-    assert "layout.layout_layer" in box_df.columns
-    assert "layout.layout_column" in box_df.columns
-    assert "layout.shelf_layer_count" in box_df.columns
-    assert "layout.shelf_column_count_mean" in box_df.columns
 
 
 def test_cli_export_features_defaults_output_to_record_dir(fixture_data_dir: Path):
@@ -384,7 +374,7 @@ def test_cli_export_features_defaults_output_to_record_dir(fixture_data_dir: Pat
 
     assert ret == 0
     assert (fixture_data_dir / "frame_features.parquet").is_file()
-    assert (fixture_data_dir / "box_features.parquet").is_file()
+    assert not (fixture_data_dir / "box_features.parquet").exists()
     meta_path = fixture_data_dir / "features_meta.json"
     assert meta_path.is_file()
     meta = json.loads(meta_path.read_text(encoding="utf-8"))
@@ -464,15 +454,13 @@ def test_cli_feature_config_filters_export_and_train(fixture_data_dir: Path, tmp
     assert ret == 0
     meta = json.loads((features_dir / "features_meta.json").read_text(encoding="utf-8"))
     assert meta["frame_feature_names"] == selected_frame
-    assert meta["box_feature_names"] == selected_box
+    assert meta["box_feature_names"] == []
     assert meta["feature_selection"]["frame_features"] == selected_frame
 
     frame_df = pd.read_csv(features_dir / "frame_features.csv")
-    box_df = pd.read_csv(features_dir / "box_features.csv")
     assert set(selected_frame) <= set(frame_df.columns)
     assert "skeleton.infer_width" not in frame_df.columns
-    assert set(selected_box) <= set(box_df.columns)
-    assert "spatial.foot_min_dist_norm" not in box_df.columns
+    assert not (features_dir / "box_features.csv").exists()
 
     model_dir = tmp_path / "selected_model"
     ret = main(
@@ -490,7 +478,7 @@ def test_cli_feature_config_filters_export_and_train(fixture_data_dir: Path, tmp
     assert ret == 0
     model_meta = json.loads((model_dir / "meta.json").read_text(encoding="utf-8"))
     assert model_meta["frame_feature_names"] == selected_frame
-    assert model_meta["box_feature_names"] == selected_box
+    assert model_meta["box_feature_names"] == []
 
 
 def test_cli_feature_config_expands_feature_groups(fixture_data_dir: Path, tmp_path: Path):
@@ -531,8 +519,7 @@ def test_cli_feature_config_expands_feature_groups(fixture_data_dir: Path, tmp_p
     meta = json.loads((features_dir / "features_meta.json").read_text(encoding="utf-8"))
     assert meta["frame_feature_names"]
     assert all(name.startswith("skeleton.") for name in meta["frame_feature_names"])
-    assert meta["box_feature_names"]
-    assert all(name.startswith("layout.") for name in meta["box_feature_names"])
+    assert meta["box_feature_names"] == []
 
     frame_df = pd.read_csv(features_dir / "frame_features.csv")
     feature_columns = set(meta["frame_feature_names"])
@@ -563,7 +550,7 @@ def test_cli_export_features_all_formats(fixture_data_dir: Path, tmp_path: Path)
     assert ret == 0
     for suffix in ("parquet", "csv", "jsonl"):
         assert (output_dir / f"frame_features.{suffix}").is_file()
-        assert (output_dir / f"box_features.{suffix}").is_file()
+        assert not (output_dir / f"box_features.{suffix}").exists()
 
     frame_csv = pd.read_csv(output_dir / "frame_features.csv")
     assert len(frame_csv) == 10
@@ -643,7 +630,7 @@ def test_cli_analyze_features(fixture_data_dir: Path, tmp_path: Path):
 
     summary = json.loads((output_dir / "correlation_summary.json").read_text(encoding="utf-8"))
     assert summary["frame_count"] == 10
-    assert summary["box_sample_count"] == 6
+    assert summary["box_sample_count"] == 0
     assert "frame_target_correlation" in summary["outputs"]
     assert "box_target_correlation" in summary["outputs"]
     assert "frame_pca_explained_variance" in summary["outputs"]
@@ -730,7 +717,7 @@ def test_cli_analyze_exported_features(fixture_data_dir: Path, tmp_path: Path):
     summary = json.loads((output_dir / "correlation_summary.json").read_text(encoding="utf-8"))
     assert summary["input_source"] == str(features_dir)
     assert summary["frame_count"] == 10
-    assert summary["box_sample_count"] == 6
+    assert summary["box_sample_count"] == 0
     assert (output_dir / "frame_target_correlation.csv").is_file()
     assert (output_dir / "box_target_correlation.csv").is_file()
     assert (output_dir / "frame_pca_projection.csv").is_file()

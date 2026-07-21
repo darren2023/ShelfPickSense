@@ -199,7 +199,7 @@ def discover_record_dirs(data_dir: Path) -> list[Path]:
     return found
 
 
-def load_record(record_dir: Path) -> RecordData:
+def load_record(record_dir: Path, *, validate_review_schema: bool = True) -> RecordData:
     record_dir = Path(record_dir).resolve()
     if not is_record_dir(record_dir):
         raise FileNotFoundError(
@@ -227,7 +227,7 @@ def load_record(record_dir: Path) -> RecordData:
 
     frame_indices = sorted(int(v) for v in skeleton["frame_idx"].unique()) if not skeleton.empty else []
     labels = build_labels_from_event_review(
-        event_review,
+        event_review if validate_review_schema else None,
         record_id=record_dir.name,
         all_frame_indices=frame_indices,
     )

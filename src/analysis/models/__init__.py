@@ -349,7 +349,7 @@ class SklearnPickingModel(PickingModel):
 
     def fit(self, dataset: Dataset) -> None:
         self.frame_feature_names = list(dataset.frame_feature_names)
-        self.box_feature_names = list(dataset.box_feature_names)
+        self.box_feature_names = []
 
         x_pick = np.vstack([s.x for s in dataset.frame_samples]) if dataset.frame_samples else np.empty((0, 0))
         y_pick = np.array([int(s.is_picking) for s in dataset.frame_samples], dtype=np.int32)

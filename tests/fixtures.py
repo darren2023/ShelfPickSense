@@ -95,26 +95,32 @@ def make_fixture_record(output_dir: Path) -> Path:
     pd.DataFrame(rows).to_parquet(output_dir / "skeleton.parquet", index=False)
 
     event_review = {
-        "schema": 1,
+        "schema": 2,
         "status": "completed",
         "verified_true": [
             {
                 "event_type": "collision",
                 "frame_idx": 6,
-                "box_tokens": ["S1:A1"],
-                "confirmed_box_tokens": ["S1:A1"],
+                "is_pick": True,
+                "person_track_id": 1,
+                "shelf_code": "S1",
+                "box_id": "A1",
             },
             {
                 "event_type": "collision",
                 "frame_idx": 7,
-                "box_tokens": ["S1:A1"],
-                "confirmed_box_tokens": ["S1:A1"],
+                "is_pick": True,
+                "person_track_id": 1,
+                "shelf_code": "S1",
+                "box_id": "A1",
             },
             {
                 "event_type": "collision",
                 "frame_idx": 9,
-                "box_tokens": ["S1:A2"],
-                "confirmed_box_tokens": ["S1:A2"],
+                "is_pick": True,
+                "person_track_id": 1,
+                "shelf_code": "S1",
+                "box_id": "A2",
             },
         ],
     }

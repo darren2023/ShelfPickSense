@@ -3,6 +3,7 @@
 ## Schema 2
 
 `event_review.json` keeps the existing `verified_true` list for compatibility, but each pick event should now include the picked box and the picking person track id.
+Feature extraction and training only support schema 2. Legacy review files must be upgraded before use.
 
 ```json
 {
@@ -31,6 +32,7 @@ Notes:
 - `is_pick` is true only when a picked box exists.
 - `shelf_code` and `box_id` identify the picked box. The loader can reconstruct the canonical token from them.
 - `person_track_id` is the preferred person identifier because it is stable across frames.
+- Legacy fields such as `tokens`, `box_tokens`, `token`, `box_token`, `confirmed_box_tokens`, and `confirmed_box_token` are upgrade inputs only and are rejected by the feature extraction loader.
 
 ## Upgrade
 

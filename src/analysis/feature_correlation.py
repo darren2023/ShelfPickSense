@@ -989,6 +989,13 @@ def _load_exported_feature_file(features_dir: Path, stem: str) -> pd.DataFrame:
     raise FileNotFoundError(f"在 {features_dir} 下未找到 {stem}.csv/.parquet/.jsonl")
 
 
+def _load_optional_exported_feature_file(features_dir: Path, stem: str) -> pd.DataFrame:
+    try:
+        return _load_exported_feature_file(features_dir, stem)
+    except FileNotFoundError:
+        return pd.DataFrame()
+
+
 def _load_exported_feature_names(features_dir: Path) -> tuple[list[str], list[str]]:
     meta_path = features_dir / "features_meta.json"
     if not meta_path.is_file():
@@ -1163,7 +1170,7 @@ def analyze_exported_feature_correlations(
     """从 export-features 已导出的特征目录分析相关性。"""
     features_dir = Path(features_dir)
     frame_df = _load_exported_feature_file(features_dir, "frame_features")
-    box_df = _load_exported_feature_file(features_dir, "box_features")
+    box_df = _load_optional_exported_feature_file(features_dir, "box_features")
     frame_feature_names, box_feature_names = _load_exported_feature_names(features_dir)
     if not frame_feature_names:
         frame_feature_names = _infer_feature_names(
@@ -1186,7 +1193,8 @@ def analyze_exported_feature_correlations(
         )
     if feature_selection:
         frame_feature_names = feature_selection.select_frame(frame_feature_names)
-        box_feature_names = feature_selection.select_box(box_feature_names)
+        if box_feature_names:
+            box_feature_names = feature_selection.select_box(box_feature_names)
     return _analyze_feature_dataframes(
         input_source=str(features_dir),
         frame_df=frame_df,

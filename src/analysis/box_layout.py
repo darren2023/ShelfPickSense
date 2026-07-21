@@ -89,30 +89,30 @@ class ShelfLayoutStats:
 
 
 def normalize_layout_layer(layer: int, layer_count: int) -> float:
-    """层号归一化：layer / (layer_count + 1)，如 4 层时 1→1/5 … 4→4/5。"""
+    """层号归一化到对应层区间中心：(layer - 0.5) / layer_count。"""
     if layer <= 0 or layer_count <= 0:
         return 0.0
-    return float(layer) / float(layer_count + 1)
+    return (float(layer) - 0.5) / float(layer_count)
 
 
 def normalize_layout_column(column: int, column_count: int) -> float:
-    """列号归一化：column / (column_count + 1)。"""
+    """列号归一化到对应列区间中心：(column - 0.5) / column_count。"""
     if column <= 0 or column_count <= 0:
         return 0.0
-    return float(column) / float(column_count + 1)
+    return (float(column) - 0.5) / float(column_count)
 
 
 def denormalize_layout_layer(layer_norm: float, layer_count: int) -> int:
     if layer_count <= 0 or layer_norm <= 0:
         return 0
-    layer = int(round(float(layer_norm) * (layer_count + 1)))
+    layer = int(float(layer_norm) * layer_count) + 1
     return max(1, min(layer_count, layer))
 
 
 def denormalize_layout_column(column_norm: float, column_count: int) -> int:
     if column_count <= 0 or column_norm <= 0:
         return 0
-    column = int(round(float(column_norm) * (column_count + 1)))
+    column = int(float(column_norm) * column_count) + 1
     return max(1, min(column_count, column))
 
 

@@ -106,13 +106,16 @@ def test_build_dataset_extracts_person_by_shelf_samples(tmp_path: Path):
         rows.append(row)
     pd.DataFrame(rows).to_parquet(record_dir / "skeleton.parquet", index=False)
     event_review = {
-        "schema": 1,
+        "schema": 2,
         "status": "completed",
         "verified_true": [
             {
                 "event_type": "collision",
                 "frame_idx": 1,
-                "box_tokens": ["S1:A1"],
+                "is_pick": True,
+                "person_track_id": 2,
+                "shelf_code": "S1",
+                "box_id": "A1",
             }
         ],
     }
@@ -126,8 +129,59 @@ def test_build_dataset_extracts_person_by_shelf_samples(tmp_path: Path):
     assert dataset.frame_count == 6
     assert sorted(sample.person_track_id for sample in dataset.frame_samples) == [1, 1, 2, 2, 3, 3]
     assert sorted(sample.shelf_code for sample in dataset.frame_samples) == ["S1", "S1", "S1", "S2", "S2", "S2"]
-    assert sum(sample.is_picking for sample in dataset.frame_samples if sample.shelf_code == "S1") == 3
+    positives = [sample for sample in dataset.frame_samples if sample.is_picking]
+    assert len(positives) == 1
+    assert positives[0].person_track_id == 2
+    assert positives[0].shelf_code == "S1"
     assert sum(sample.is_picking for sample in dataset.frame_samples if sample.shelf_code == "S2") == 0
+
+
+def test_old_event_review_schema_requires_upgrade(tmp_path: Path):
+    import json
+
+    import pandas as pd
+    import pytest
+
+    from analysis.records import load_record
+    from fixtures import _skeleton_row
+
+    record_dir = tmp_path / "record_001"
+    record_dir.mkdir(parents=True, exist_ok=True)
+    annotation = {
+        "annotation_size": {"width": 640, "height": 480},
+        "shelves": [
+            {
+                "shelf_code": "S1",
+                "boxes": [
+                    {
+                        "box_id": "A1",
+                        "shelf_code": "S1",
+                        "video_polygon": [[100, 100], [200, 100], [200, 200], [100, 200]],
+                    }
+                ],
+            }
+        ],
+    }
+    (record_dir / "annotation.json").write_text(json.dumps(annotation, ensure_ascii=False), encoding="utf-8")
+    pd.DataFrame([_skeleton_row(1, left_wrist=(150, 150), right_wrist=(160, 155))]).to_parquet(
+        record_dir / "skeleton.parquet",
+        index=False,
+    )
+    (record_dir / "event_review.json").write_text(
+        json.dumps(
+            {
+                "schema": 1,
+                "verified_true": [
+                    {"event_type": "collision", "frame_idx": 1, "box_tokens": ["S1:A1"]},
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="upgrade review annotations to schema v2"):
+        load_record(record_dir)
 
 
 def test_keep_empty_skeleton_frames_option(tmp_path: Path):

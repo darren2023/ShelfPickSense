@@ -49,12 +49,9 @@ def test_layout_supervision_in_dataset(fixture_data_dir: Path):
     frame = next(s for s in dataset.frame_samples if s.frame_idx == 6)
     assert frame.is_picking
     assert frame.target_layout_layer_norm == pytest.approx(0.5)
-    assert frame.target_layout_column_norm == pytest.approx(2 / 3)
-
-    target = next(s for s in dataset.box_samples if s.box_token == "S1:A1")
-    assert target.is_target
-    assert target.target_layout_layer_norm == pytest.approx(0.5)
-    assert target.target_layout_column_norm == pytest.approx(2 / 3)
+    assert frame.target_layout_column_norm == pytest.approx(0.75)
+    assert dataset.box_samples == []
+    assert dataset.box_feature_names == []
 
 
 def test_spatial_wrist_and_foot_distance(fixture_data_dir: Path):
