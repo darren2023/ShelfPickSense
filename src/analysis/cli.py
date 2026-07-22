@@ -569,6 +569,10 @@ def _cmd_benchmark_features(args: argparse.Namespace) -> int:
         plan.jobs = int(args.jobs)
     if args.feature_frame_stride:
         plan.feature_frame_stride = int(args.feature_frame_stride)
+    if args.train_split_ratio is not None:
+        if not 0.0 < float(args.train_split_ratio) < 1.0:
+            raise ValueError("--train-split-ratio must be greater than 0 and less than 1")
+        plan.train_split_ratio = float(args.train_split_ratio)
 
     if args.report_only:
         logger.info(
@@ -1048,6 +1052,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_bench_features.add_argument("--jobs", type=int, default=0, help="覆盖配置中的并行模型数")
     p_bench_features.add_argument("--feature-frame-stride", type=int, default=0, help="覆盖配置中的特征提取帧采样间隔：每 N 个骨架帧取 1 帧")
+    p_bench_features.add_argument("--train-split-ratio", type=float, default=None, help="eval-data-dir 未指定时的训练集比例，例如 0.8")
     p_bench_features.add_argument(
         "--report-only",
         action="store_true",

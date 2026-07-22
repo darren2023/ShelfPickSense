@@ -322,6 +322,57 @@ def test_cli_benchmark_features_runs_multiple_feature_sets(tmp_path: Path):
     assert all(item["benchmark"]["feature_frame_stride"] == 2 for item in second_summary["sets"])
 
 
+def test_benchmark_features_auto_split_without_eval_data_dir(tmp_path: Path):
+    import json
+
+    from analysis.cli import main
+    from fixtures import make_fixture_record
+
+    data_dir = tmp_path / "Records"
+    make_fixture_record(data_dir / "record_001")
+    make_fixture_record(data_dir / "record_002")
+    make_fixture_record(data_dir / "record_003")
+    output_dir = tmp_path / "feature_benchmark"
+    plan_path = tmp_path / "feature_benchmark_plan.json"
+    plan_path.write_text(
+        json.dumps(
+            {
+                "train_data_dir": str(data_dir),
+                "output_dir": str(output_dir),
+                "models": ["sklearn_rf"],
+                "jobs": 1,
+                "train_split_ratio": 0.67,
+                "feature_sets": [{"name": "all_features"}],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    ret = main(["benchmark-features", "--plan", str(plan_path)])
+
+    assert ret == 0
+    run_dirs = [path for path in output_dir.iterdir() if path.is_dir() and path.name.startswith("run_")]
+    assert len(run_dirs) == 1
+    run_dir = run_dirs[0]
+    summary = json.loads((run_dir / "feature_benchmark_summary.json").read_text(encoding="utf-8"))
+    saved_plan = json.loads((run_dir / "feature_benchmark_plan.json").read_text(encoding="utf-8"))
+    assert saved_plan["eval_data_dir"] is None
+    assert saved_plan["auto_split"] is True
+    assert saved_plan["actual_train_record_ids"] == ["record_001", "record_002"]
+    assert saved_plan["actual_eval_record_ids"] == ["record_003"]
+    assert summary["auto_split"] is True
+    assert summary["train_split_ratio"] == 0.67
+    assert summary["train_record_ids"] == ["record_001", "record_002"]
+    assert summary["eval_record_ids"] == ["record_003"]
+    benchmark = summary["sets"][0]["benchmark"]
+    assert benchmark["train_record_ids"] == ["record_001", "record_002"]
+    assert benchmark["eval_record_ids"] == ["record_003"]
+    assert benchmark["train_results"][0]["record_ids"] == ["record_001", "record_002"]
+    assert benchmark["baseline_report"]["record_ids"] == ["record_003"]
+    assert benchmark["feature_cache_hit"] is False
+
+
 def test_cli_export_features(fixture_data_dir: Path, tmp_path: Path):
     import json
 

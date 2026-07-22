@@ -24,7 +24,7 @@ from analysis.evaluation import BoxMetrics, ModelEvaluation, PickingMetrics
 from analysis.train import TrainResult
 from analysis.features.selection import FeatureSelection, load_feature_selection
 from analysis.models import SUPPORTED_MODEL_NAMES
-from analysis.records import discover_record_dirs, load_all_records
+from analysis.records import RecordData, discover_record_dirs, load_all_records
 from analysis.constants import ANNOTATION_FILE, ANNOTATION_V2_FILE, EVENT_REVIEW_FILE, EVENT_REVIEW_V2_FILE, SKELETON_FILE
 from analysis.rule_baseline import RULE_COLLISION_BASELINE_NAME, run_external_collision_baseline
 
@@ -45,8 +45,17 @@ class FeatureBenchmarkPlan:
     model_names: list[str] = field(default_factory=lambda: list(DEFAULT_MODEL_NAMES))
     jobs: int = 8
     feature_frame_stride: int = 1
+    train_split_ratio: float = 0.8
     sets: list[FeatureBenchmarkSetSpec] = field(default_factory=list)
     source_path: str = ""
+
+
+@dataclass(frozen=True)
+class FeatureBenchmarkRecordSplit:
+    train_records: list[RecordData]
+    eval_records: list[RecordData]
+    auto_split: bool
+    train_split_ratio: float
 
 
 @dataclass
@@ -80,6 +89,10 @@ class FeatureBenchmarkBatchResult:
     benchmarked_at: str
     report_path: str
     summary_path: str
+    auto_split: bool = False
+    train_split_ratio: float = 0.8
+    train_record_ids: list[str] = field(default_factory=list)
+    eval_record_ids: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -92,6 +105,10 @@ class FeatureBenchmarkBatchResult:
             "benchmarked_at": self.benchmarked_at,
             "report_path": self.report_path,
             "summary_path": self.summary_path,
+            "auto_split": self.auto_split,
+            "train_split_ratio": self.train_split_ratio,
+            "train_record_ids": list(self.train_record_ids),
+            "eval_record_ids": list(self.eval_record_ids),
         }
 
 
@@ -154,28 +171,42 @@ def _plan_to_dict(
     plan: FeatureBenchmarkPlan,
     *,
     run_output_dir: Path | None = None,
+    record_split: FeatureBenchmarkRecordSplit | None = None,
 ) -> dict[str, Any]:
-    eval_data_dir = plan.eval_data_dir or plan.train_data_dir
     payload: dict[str, Any] = {
         "train_data_dir": str(plan.train_data_dir.resolve()),
-        "eval_data_dir": str(eval_data_dir.resolve()),
+        "eval_data_dir": str(plan.eval_data_dir.resolve()) if plan.eval_data_dir else None,
         "output_dir": str(plan.output_dir.resolve()),
         "models": list(plan.model_names),
         "jobs": int(plan.jobs),
         "feature_frame_stride": int(plan.feature_frame_stride),
+        "train_split_ratio": float(plan.train_split_ratio),
         "feature_sets": [_set_spec_to_dict(spec) for spec in plan.sets],
     }
     if run_output_dir is not None:
         payload["run_output_dir"] = str(run_output_dir.resolve())
     if plan.source_path:
         payload["source_path"] = plan.source_path
+    if record_split is not None:
+        payload["auto_split"] = record_split.auto_split
+        payload["actual_train_record_ids"] = [record.record_id for record in record_split.train_records]
+        payload["actual_eval_record_ids"] = [record.record_id for record in record_split.eval_records]
     return payload
 
 
-def _write_resolved_plan(plan: FeatureBenchmarkPlan, output_dir: Path) -> Path:
+def _write_resolved_plan(
+    plan: FeatureBenchmarkPlan,
+    output_dir: Path,
+    *,
+    record_split: FeatureBenchmarkRecordSplit | None = None,
+) -> Path:
     path = output_dir / "feature_benchmark_plan.json"
     path.write_text(
-        json.dumps(_plan_to_dict(plan, run_output_dir=output_dir), ensure_ascii=False, indent=2),
+        json.dumps(
+            _plan_to_dict(plan, run_output_dir=output_dir, record_split=record_split),
+            ensure_ascii=False,
+            indent=2,
+        ),
         encoding="utf-8",
     )
     return path
@@ -198,10 +229,12 @@ def _feature_cache_signature(
     train_data_dir: Path,
     feature_selection: FeatureSelection | None,
     feature_frame_stride: int,
+    train_record_dirs: list[Path] | None = None,
 ) -> dict[str, Any]:
-    record_dirs = discover_record_dirs(train_data_dir)
+    record_dirs = train_record_dirs or discover_record_dirs(train_data_dir)
     records = []
     for record_dir in record_dirs:
+        record_dir = Path(record_dir)
         records.append(
             {
                 "record_dir": str(record_dir.resolve()),
@@ -213,7 +246,7 @@ def _feature_cache_signature(
             }
         )
     return {
-        "version": 7,
+        "version": 8,
         "train_data_dir": str(Path(train_data_dir).resolve()),
         "feature_selection": feature_selection.to_dict() if feature_selection else None,
         "feature_frame_stride": max(1, int(feature_frame_stride or 1)),
@@ -228,11 +261,13 @@ def _feature_cache_path(
     train_data_dir: Path,
     feature_selection: FeatureSelection | None,
     feature_frame_stride: int,
+    train_record_dirs: list[Path] | None = None,
 ) -> Path:
     signature = _feature_cache_signature(
         train_data_dir=train_data_dir,
         feature_selection=feature_selection,
         feature_frame_stride=feature_frame_stride,
+        train_record_dirs=train_record_dirs,
     )
     digest = hashlib.sha256(
         json.dumps(signature, ensure_ascii=False, sort_keys=True).encode("utf-8")
@@ -253,6 +288,17 @@ def _parse_set_spec(data: dict[str, Any], index: int) -> FeatureBenchmarkSetSpec
         frame_features=_optional_string_list(data, "frame_features") or _optional_string_list(data, "frame"),
         box_features=_optional_string_list(data, "box_features") or _optional_string_list(data, "box"),
     )
+
+
+def _parse_train_split_ratio(data: dict[str, Any]) -> float:
+    raw = data.get("train_split_ratio", data.get("split_ratio", data.get("train_ratio", 0.8)))
+    try:
+        ratio = float(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("train_split_ratio must be a number between 0 and 1") from exc
+    if not 0.0 < ratio < 1.0:
+        raise ValueError("train_split_ratio must be greater than 0 and less than 1")
+    return ratio
 
 
 def load_feature_benchmark_plan(path: str | Path) -> FeatureBenchmarkPlan:
@@ -286,6 +332,7 @@ def load_feature_benchmark_plan(path: str | Path) -> FeatureBenchmarkPlan:
         model_names=list(model_names or DEFAULT_MODEL_NAMES),
         jobs=int(data.get("jobs") or 8),
         feature_frame_stride=max(1, int(data.get("feature_frame_stride") or data.get("frame_stride") or 1)),
+        train_split_ratio=_parse_train_split_ratio(data),
         sets=[_parse_set_spec(item, index) for index, item in enumerate(raw_sets)],
         source_path=str(config_path.resolve()),
     )
@@ -518,6 +565,8 @@ def _benchmark_result_from_dict(data: dict[str, Any]) -> BenchmarkResult:
         feature_cache_hit=bool(data.get("feature_cache_hit") or False),
         feature_dataset_seconds=float(data.get("feature_dataset_seconds") or 0.0),
         feature_frame_stride=int(data.get("feature_frame_stride") or 1),
+        train_record_ids=list(data.get("train_record_ids") or []),
+        eval_record_ids=list(data.get("eval_record_ids") or []),
     )
 
 
@@ -552,6 +601,10 @@ def load_feature_benchmark_batch_result(output_dir: Path) -> FeatureBenchmarkBat
         benchmarked_at=str(data.get("benchmarked_at") or ""),
         report_path=str(data.get("report_path") or ""),
         summary_path=str(summary_path.resolve()),
+        auto_split=bool(data.get("auto_split") or False),
+        train_split_ratio=float(data.get("train_split_ratio") or 0.8),
+        train_record_ids=list(data.get("train_record_ids") or []),
+        eval_record_ids=list(data.get("eval_record_ids") or []),
     )
 
 
@@ -588,6 +641,48 @@ def _load_batch_result_from_plan(plan: FeatureBenchmarkPlan) -> FeatureBenchmark
         benchmarked_at=datetime.now(timezone.utc).isoformat(),
         report_path="",
         summary_path=str((output_dir / "feature_benchmark_summary.json").resolve()),
+        auto_split=plan.eval_data_dir is None,
+        train_split_ratio=float(plan.train_split_ratio),
+    )
+
+
+def _record_ids(records: list[RecordData]) -> list[str]:
+    return [record.record_id for record in records]
+
+
+def _split_feature_benchmark_records(plan: FeatureBenchmarkPlan) -> FeatureBenchmarkRecordSplit:
+    ratio = float(plan.train_split_ratio)
+    if not 0.0 < ratio < 1.0:
+        raise ValueError("train_split_ratio must be greater than 0 and less than 1")
+    if plan.eval_data_dir is not None:
+        return FeatureBenchmarkRecordSplit(
+            train_records=load_all_records(plan.train_data_dir),
+            eval_records=load_all_records(plan.eval_data_dir),
+            auto_split=False,
+            train_split_ratio=ratio,
+        )
+
+    records = load_all_records(plan.train_data_dir)
+    total = len(records)
+    if total < 2:
+        raise ValueError(
+            "feature benchmark auto split requires at least 2 records; set eval_data_dir for a single-record run"
+        )
+    train_count = int(total * ratio)
+    train_count = max(1, min(total - 1, train_count))
+    train_records = records[:train_count]
+    eval_records = records[train_count:]
+    logger.info(
+        "feature benchmark auto split: train_ratio={}, train_records={}, eval_records={}",
+        ratio,
+        _record_ids(train_records),
+        _record_ids(eval_records),
+    )
+    return FeatureBenchmarkRecordSplit(
+        train_records=train_records,
+        eval_records=eval_records,
+        auto_split=True,
+        train_split_ratio=ratio,
     )
 
 
@@ -616,12 +711,13 @@ def run_feature_benchmarks(plan: FeatureBenchmarkPlan) -> FeatureBenchmarkBatchR
     base_output_dir.mkdir(parents=True, exist_ok=True)
     output_dir = _timestamped_run_dir(base_output_dir)
     output_dir.mkdir(parents=True, exist_ok=False)
-    plan_path = _write_resolved_plan(plan, output_dir)
     base_dir = Path(plan.source_path).parent if plan.source_path else Path.cwd()
+    record_split = _split_feature_benchmark_records(plan)
+    plan_path = _write_resolved_plan(plan, output_dir, record_split=record_split)
     eval_data_dir = plan.eval_data_dir or plan.train_data_dir
     feature_frame_stride = max(1, int(plan.feature_frame_stride or 1))
     logger.info("多特征 benchmark 运行配置已保存: {}", plan_path)
-    eval_records = load_all_records(eval_data_dir)
+    eval_records = record_split.eval_records
     baseline_predictions_filename = prediction_filename_for_records(eval_records)
     logger.info("运行批量特征 benchmark 规则基线: {}", RULE_COLLISION_BASELINE_NAME)
     baseline_report = run_external_collision_baseline(
@@ -646,6 +742,7 @@ def run_feature_benchmarks(plan: FeatureBenchmarkPlan) -> FeatureBenchmarkBatchR
             train_data_dir=plan.train_data_dir,
             feature_selection=feature_selection,
             feature_frame_stride=feature_frame_stride,
+            train_record_dirs=[record.record_dir for record in record_split.train_records],
         )
         logger.info(
             "开始特征配置 benchmark: name={}, output={}, feature_config={}, feature_cache={}",
@@ -664,6 +761,8 @@ def run_feature_benchmarks(plan: FeatureBenchmarkPlan) -> FeatureBenchmarkBatchR
             baseline_report=baseline_report,
             train_dataset_cache_path=cache_path,
             feature_frame_stride=feature_frame_stride,
+            train_records=record_split.train_records,
+            eval_records=record_split.eval_records,
         )
         best_model, best_macro_f1 = _best_from_benchmark(benchmark)
         set_results.append(
@@ -688,6 +787,10 @@ def run_feature_benchmarks(plan: FeatureBenchmarkPlan) -> FeatureBenchmarkBatchR
         benchmarked_at=datetime.now(timezone.utc).isoformat(),
         report_path="",
         summary_path=str(summary_path.resolve()),
+        auto_split=record_split.auto_split,
+        train_split_ratio=record_split.train_split_ratio,
+        train_record_ids=_record_ids(record_split.train_records),
+        eval_record_ids=_record_ids(record_split.eval_records),
     )
     report_path = _write_batch_report(batch, output_dir)
     batch.report_path = str(report_path.resolve())

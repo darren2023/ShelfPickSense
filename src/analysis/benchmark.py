@@ -18,7 +18,7 @@ from analysis.rule_baseline import RULE_BASELINE_NAME, run_rule_baseline
 from analysis.features.registry import default_registry
 from analysis.features.selection import FeatureSelection
 from analysis.models import SUPPORTED_MODEL_NAMES
-from analysis.records import load_all_records
+from analysis.records import RecordData, load_all_records
 from analysis.train import TrainResult, train_model_from_dataset
 
 
@@ -59,6 +59,8 @@ class BenchmarkResult:
     feature_cache_hit: bool = False
     feature_dataset_seconds: float = 0.0
     feature_frame_stride: int = 1
+    train_record_ids: list[str] | None = None
+    eval_record_ids: list[str] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         payload = {
@@ -75,6 +77,8 @@ class BenchmarkResult:
             "feature_cache_hit": self.feature_cache_hit,
             "feature_dataset_seconds": self.feature_dataset_seconds,
             "feature_frame_stride": self.feature_frame_stride,
+            "train_record_ids": list(self.train_record_ids or []),
+            "eval_record_ids": list(self.eval_record_ids or []),
         }
         if self.baseline_report is not None:
             payload["baseline_report"] = self.baseline_report.to_dict()
@@ -93,6 +97,8 @@ def run_benchmark(
     baseline_report: ModelEvaluation | None = None,
     train_dataset_cache_path: Path | None = None,
     feature_frame_stride: int = 1,
+    train_records: list[RecordData] | None = None,
+    eval_records: list[RecordData] | None = None,
 ) -> BenchmarkResult:
     """批量训练多个模型，并在同一评测集上生成对比结果。"""
     train_data_dir = Path(train_data_dir)
@@ -113,7 +119,12 @@ def run_benchmark(
     registry = default_registry()
     frame_stride = max(1, int(feature_frame_stride or 1))
     logger.info("benchmark 加载训练数据: {}", train_data_dir)
-    train_records = load_all_records(train_data_dir)
+    if train_records is None:
+        logger.info("benchmark loading train records: {}", train_data_dir)
+        train_records = load_all_records(train_data_dir)
+    else:
+        train_records = list(train_records)
+        logger.info("benchmark using preloaded train records: records={}, train_data={}", len(train_records), train_data_dir)
     cache_path = Path(train_dataset_cache_path) if train_dataset_cache_path else None
     feature_cache_hit = False
     feature_start = time.perf_counter()
@@ -152,7 +163,10 @@ def run_benchmark(
         len(train_dataset.box_samples),
     )
 
-    if train_data_dir.resolve() == eval_data_dir.resolve():
+    if eval_records is not None:
+        eval_records = list(eval_records)
+        logger.info("benchmark using preloaded eval records: records={}, eval_data={}", len(eval_records), eval_data_dir)
+    elif train_data_dir.resolve() == eval_data_dir.resolve():
         eval_records = train_records
         logger.info("benchmark 复用训练记录作为评测记录")
     else:
@@ -246,6 +260,8 @@ def run_benchmark(
         feature_cache_hit=feature_cache_hit,
         feature_dataset_seconds=feature_dataset_seconds,
         feature_frame_stride=frame_stride,
+        train_record_ids=[record.record_id for record in train_records],
+        eval_record_ids=[record.record_id for record in eval_records],
     )
     (output_dir / "benchmark_summary.json").write_text(
         json.dumps(result.to_dict(), ensure_ascii=False, indent=2),
