@@ -144,6 +144,8 @@ def _frame_context(ctx: FeatureContext, offset: int) -> FeatureContext | None:
         box_index=ctx.box_index,
         box_tokens=ctx.box_tokens,
         frame_index=ctx.frame_index,
+        sample_frames=ctx.sample_frames,
+        _sample_index=ctx._sample_index,
     )
 
 

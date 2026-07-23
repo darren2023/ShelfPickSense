@@ -1,0 +1,9 @@
+{
+  "frame_features": [
+    "skeleton",
+    "rule.any_collision"
+  ],
+  "box_features": [
+    "rule"
+  ]
+}

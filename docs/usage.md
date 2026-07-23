@@ -34,7 +34,7 @@ uv run python main.py train \
 - `persons` 为空；
 - 所有人均无置信度 ≥ 0.3 的肩/腕关键点。
 
-过滤仅作用于**训练**；`eval`、`benchmark` 的评测阶段仍使用全部帧，以反映真实场景表现。
+过滤仅作用于**训练**；`eval`、`benchmark` 评测默认使用全部帧（`--feature-frame-stride 1`）。若训练时使用了 stride 隔帧，评测需传相同 `--feature-frame-stride` 以与训练对齐。
 
 如需保留无骨架帧：
 
@@ -274,6 +274,15 @@ outputs/correlations/
 uv run python main.py eval \
   --data-dir data/demo \
   --model models/rf
+```
+
+训练时若使用了 `--feature-frame-stride N`，评测需传相同参数以与训练采样序列对齐：
+
+```bash
+uv run python main.py eval \
+  --data-dir data/demo \
+  --model models/rf_stride2 \
+  --feature-frame-stride 2
 ```
 
 默认输出：

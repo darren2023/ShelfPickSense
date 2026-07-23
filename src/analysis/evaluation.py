@@ -11,6 +11,7 @@ from typing import Any
 from loguru import logger
 
 from analysis.box_layout import normalized_layout_targets
+from analysis.dataset import stride_frames
 from analysis.features.base import FeatureContext
 from analysis.features.registry import default_registry
 from analysis.models import PickingModel, PickingPrediction, SklearnPickingModel
@@ -161,13 +162,17 @@ def predict_record(
     record: RecordData,
     registry: FeatureRegistry | None = None,
     frames: list[FramePersons] | None = None,
+    *,
+    feature_frame_stride: int = 1,
 ) -> list[dict[str, Any]]:
     reg = registry or default_registry()
     assert isinstance(model, SklearnPickingModel)
     results: list[dict[str, Any]] = []
 
-    for frame in frames if frames is not None else record.frames():
-        ctx = FeatureContext.from_record(record, frame)
+    source_frames = frames if frames is not None else record.frames()
+    sample_frames = stride_frames(source_frames, feature_frame_stride)
+    for frame in sample_frames:
+        ctx = FeatureContext.from_record(record, frame, sample_frames=sample_frames)
         preds = [
             model.predict_frame(
                 group.to_vector(model.frame_feature_names),
@@ -207,10 +212,17 @@ class Evaluator:
         self,
         records: list[RecordData],
         registry: FeatureRegistry | None = None,
+        *,
+        feature_frame_stride: int = 1,
     ) -> None:
         self.records = records
         self.registry = registry or default_registry()
-        logger.debug("初始化评测器: records={}", len(records))
+        self.feature_frame_stride = max(1, int(feature_frame_stride or 1))
+        logger.debug(
+            "初始化评测器: records={}, feature_frame_stride={}",
+            len(records),
+            self.feature_frame_stride,
+        )
 
     def evaluate(
         self,
@@ -227,12 +239,25 @@ class Evaluator:
         prediction_rows: list[dict[str, Any]] = []
 
         for record in self.records:
-            frames = record.frames()
-            logger.debug("评测记录: record_id={}, frames={}", record.record_id, len(frames))
-            preds = predict_record(model, record, self.registry, frames=frames)
+            source_frames = record.frames()
+            eval_frames = stride_frames(source_frames, self.feature_frame_stride)
+            logger.debug(
+                "评测记录: record_id={}, source_frames={}, eval_frames={}, stride={}",
+                record.record_id,
+                len(source_frames),
+                len(eval_frames),
+                self.feature_frame_stride,
+            )
+            preds = predict_record(
+                model,
+                record,
+                self.registry,
+                frames=source_frames,
+                feature_frame_stride=self.feature_frame_stride,
+            )
             pred_by_frame = {p["frame_idx"]: p for p in preds}
 
-            for frame in frames:
+            for frame in eval_frames:
                 label = record.labels.label_for(frame.frame_idx)
                 pred = pred_by_frame.get(frame.frame_idx, {})
                 true_is_picking = label.is_picking
@@ -310,6 +335,7 @@ class Evaluator:
                 "frame_count": len(y_true),
                 "positive_frames": sum(y_true),
                 "box_eval_frames": len(true_boxes),
+                "feature_frame_stride": self.feature_frame_stride,
             },
         )
         if predictions_output_path is not None:
@@ -324,12 +350,14 @@ def evaluate_model(
     *,
     registry: FeatureRegistry | None = None,
     predictions_output_path: Path | None = None,
+    feature_frame_stride: int = 1,
 ) -> ModelEvaluation:
-    logger.info("加载评测数据: {}", data_dir)
+    frame_stride = max(1, int(feature_frame_stride or 1))
+    logger.info("加载评测数据: {}, feature_frame_stride={}", data_dir, frame_stride)
     records = load_all_records(data_dir)
     logger.info("加载模型: {}", model_path)
     model = SklearnPickingModel.load(model_path)
-    evaluator = Evaluator(records, registry=registry)
+    evaluator = Evaluator(records, registry=registry, feature_frame_stride=frame_stride)
     return evaluator.evaluate(
         model,
         data_dir=str(data_dir.resolve()),

@@ -158,7 +158,7 @@ def run_benchmark(
     else:
         logger.info("benchmark 加载评测数据: {}", eval_data_dir)
         eval_records = load_all_records(eval_data_dir)
-    evaluator = Evaluator(eval_records, registry=registry)
+    evaluator = Evaluator(eval_records, registry=registry, feature_frame_stride=frame_stride)
     predictions_filename = prediction_filename_for_records(eval_records)
 
     if baseline_report is None:

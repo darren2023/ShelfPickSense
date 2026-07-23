@@ -58,6 +58,32 @@ def test_build_dataset_feature_frame_stride(tmp_path: Path):
     assert [sample.frame_idx for sample in dataset.frame_samples] == [1, 4, 7, 10]
 
 
+def test_stride_temporal_lookup_uses_sample_sequence_not_skipped_frames(tmp_path: Path):
+    """stride=2 时，move_1 应对齐上一采样帧，不得使用被 stride 跳过的中间帧。"""
+    from analysis.dataset import build_dataset
+    from analysis.features.registry import default_registry
+    from analysis.records import load_record
+
+    fixture_dir = make_fixture_record(tmp_path / "record_001")
+    record = load_record(fixture_dir)
+
+    dense = build_dataset([record], default_registry(), feature_frame_stride=1)
+    strided = build_dataset([record], default_registry(), feature_frame_stride=2)
+
+    dense_by_idx = {s.frame_idx: s for s in dense.frame_samples}
+    strided_by_idx = {s.frame_idx: s for s in strided.frame_samples}
+
+    move_key = "temporal.left_wrist_move_1"
+    dense_names = dense.frame_feature_names
+    strided_names = strided.frame_feature_names
+
+    # frame 7：stride=2 时上一采样点为 frame 5；全量序列上一帧为 frame 6（取货手腕位置不同）
+    dense_move_7 = dense_by_idx[7].x[dense_names.index(move_key)]
+    strided_move_7 = strided_by_idx[7].x[strided_names.index(move_key)]
+    assert dense_move_7 == 0.0
+    assert strided_move_7 > 0.0
+
+
 def test_keep_empty_skeleton_frames_option(tmp_path: Path):
     from analysis.train import train_model
 

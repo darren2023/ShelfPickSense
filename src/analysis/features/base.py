@@ -21,18 +21,45 @@ class FeatureContext:
     box_index: dict[str, BoxInfo]
     box_tokens: list[str]
     frame_index: dict[int, FramePersons] = field(default_factory=dict)
+    sample_frames: list[FramePersons] = field(default_factory=list)
     current_person: dict[str, Any] | None = None
     current_track_id: int | None = None
+    _sample_index: dict[int, int] = field(default_factory=dict, repr=False, compare=False)
     _rule_hit_cache: dict[tuple[int | None, int, str | None], int] = field(
         default_factory=dict, repr=False, compare=False
     )
 
+    def __post_init__(self) -> None:
+        if not self.sample_frames and self.frame_index:
+            self.sample_frames = [self.frame_index[i] for i in sorted(self.frame_index.keys())]
+        if self.sample_frames and not self._sample_index:
+            self._sample_index = {f.frame_idx: i for i, f in enumerate(self.sample_frames)}
+
+    @staticmethod
+    def _sample_index_from(frames: list[FramePersons]) -> dict[int, int]:
+        return {f.frame_idx: i for i, f in enumerate(frames)}
+
+    def prior_sample(self, k: int) -> FramePersons | None:
+        """按采样序列回退 k 步。k=0 为当前帧，k=1 为序列中上一采样帧。"""
+        if k < 0:
+            return None
+        if k == 0:
+            return self.frame
+        if not self.sample_frames:
+            return None
+        idx = self._sample_index.get(self.frame.frame_idx)
+        if idx is None or idx - k < 0:
+            return None
+        return self.sample_frames[idx - k]
+
     def prior_frame(self, offset: int) -> FramePersons | None:
-        """按帧序号偏移取历史帧。offset=0 为当前帧，offset=1 为上一帧。"""
+        """时序 lookup：有序列时按 prior_sample，否则按 frame_idx-offset（兼容旧路径）。"""
         if offset < 0:
             return None
         if offset == 0:
             return self.frame
+        if self.sample_frames:
+            return self.prior_sample(offset)
         return self.frame_index.get(self.frame.frame_idx - offset)
 
     @classmethod
@@ -42,6 +69,7 @@ class FeatureContext:
         frame: FramePersons,
         *,
         frame_index: dict[int, FramePersons] | None = None,
+        sample_frames: list[FramePersons] | None = None,
     ) -> FeatureContext:
         box_index = record.box_index if record.box_index else build_box_index(
             record.annotation,
@@ -49,6 +77,12 @@ class FeatureContext:
             infer_h=record.infer_height,
         )
         idx = frame_index if frame_index is not None else record.frame_index()
+        if sample_frames is not None:
+            samples = list(sample_frames)
+        elif idx:
+            samples = [idx[i] for i in sorted(idx.keys())]
+        else:
+            samples = record.frames()
         tokens = record.box_tokens if record.box_tokens else sorted(box_index.keys())
         return cls(
             record=record,
@@ -56,6 +90,8 @@ class FeatureContext:
             box_index=box_index,
             box_tokens=tokens,
             frame_index=idx,
+            sample_frames=samples,
+            _sample_index=cls._sample_index_from(samples),
         )
 
     def for_person(self, person: dict[str, Any], track_id: int | None) -> "FeatureContext":
@@ -69,6 +105,8 @@ class FeatureContext:
             box_index=self.box_index,
             box_tokens=self.box_tokens,
             frame_index=self.frame_index,
+            sample_frames=self.sample_frames,
+            _sample_index=self._sample_index,
             current_person=person,
             current_track_id=track_id,
         )

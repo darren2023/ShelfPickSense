@@ -187,10 +187,15 @@ def test_skeleton_shape_features_and_window_deltas():
         box_tokens=[],
     )
     frames = {
-        1: FramePersons(frame_idx=1, timestamp_sec=0.0, persons=[_person(hip_shift_x=60.0, bbox_y_shift=-10.0)]),
-        6: FramePersons(frame_idx=6, timestamp_sec=0.2, persons=[_person(hip_shift_x=0.0, bbox_y_shift=0.0)]),
+        fi: FramePersons(
+            frame_idx=fi,
+            timestamp_sec=fi / 25.0,
+            persons=[_person(hip_shift_x=60.0 if fi == 1 else 0.0, bbox_y_shift=-10.0 if fi == 1 else 0.0)],
+        )
+        for fi in range(1, 7)
     }
-    ctx = FeatureContext.from_record(record, frames[6], frame_index=frames)
+    sample_frames = [frames[i] for i in range(1, 7)]
+    ctx = FeatureContext.from_record(record, frames[6], sample_frames=sample_frames)
     feat = default_registry().extract_frame_feature_groups_from_context(ctx)[0].features
 
     previous_torso = abs(math.degrees(math.atan2(60.0, 100.0))) / 90.0

@@ -234,11 +234,15 @@ def _feature_extract_log_interval(total_frames: int) -> int:
     return 500
 
 
-def _stride_frames(frames: list[FramePersons], frame_stride: int) -> list[FramePersons]:
+def stride_frames(frames: list[FramePersons], frame_stride: int) -> list[FramePersons]:
+    """按列表位置每 N 帧取 1 帧，与训练特征提取采样一致。"""
     stride = max(1, int(frame_stride or 1))
     if stride <= 1:
         return frames
     return frames[::stride]
+
+
+_stride_frames = stride_frames
 
 
 def _extract_record_samples(
@@ -252,10 +256,9 @@ def _extract_record_samples(
     frame_samples: list[FrameSample] = []
     box_samples: list[BoxSample] = []
     frames = _stride_frames(record.frames(), frame_stride)
-    frame_index = record.frame_index()
 
     for frame in frames:
-        ctx = FeatureContext.from_record(record, frame, frame_index=frame_index)
+        ctx = FeatureContext.from_record(record, frame, sample_frames=frames)
         label = record.labels.label_for(frame.frame_idx)
         target_side, target_layer_norm, target_col_norm = _layout_target_from_label(record, label)
         for frame_feat in registry.extract_frame_feature_groups_from_context(ctx):
@@ -439,7 +442,6 @@ def build_dataset(
     processed_frames = 0
     for record_index, record in enumerate(records, start=1):
         frames = _stride_frames(record.frames(), frame_stride)
-        frame_index = record.frame_index()
         logger.info(
             "提取特征 [{}/{}]: record={} frames={} frame_stride={}",
             record_index,
@@ -450,7 +452,7 @@ def build_dataset(
         )
 
         for frame in frames:
-            ctx = FeatureContext.from_record(record, frame, frame_index=frame_index)
+            ctx = FeatureContext.from_record(record, frame, sample_frames=frames)
             label = record.labels.label_for(frame.frame_idx)
             target_side, target_layer_norm, target_col_norm = _layout_target_from_label(record, label)
             for frame_feat in reg.extract_frame_feature_groups_from_context(ctx):

@@ -82,12 +82,18 @@ def _cmd_train(args: argparse.Namespace) -> int:
 
 
 def _cmd_eval(args: argparse.Namespace) -> int:
-    logger.info("开始评测模型: model={}, data_dir={}", args.model, args.data_dir)
+    logger.info(
+        "开始评测模型: model={}, data_dir={}, feature_frame_stride={}",
+        args.model,
+        args.data_dir,
+        args.feature_frame_stride,
+    )
     predictions_out = Path(args.predictions) if args.predictions else Path(args.model) / "eval_predictions.json"
     report = evaluate_model(
         Path(args.model),
         Path(args.data_dir),
         predictions_output_path=predictions_out,
+        feature_frame_stride=args.feature_frame_stride,
     )
     out = Path(args.report) if args.report else Path(args.model) / "eval_report.json"
     save_report(report, out)
@@ -1004,6 +1010,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_eval.add_argument("--model", required=True, help="已训练模型目录")
     p_eval.add_argument("--report", default="", help="评测报告输出路径（默认写入模型目录）")
     p_eval.add_argument("--predictions", default="", help="预测结果输出路径（默认写入模型目录）")
+    p_eval.add_argument(
+        "--feature-frame-stride",
+        type=int,
+        default=1,
+        help="特征提取帧采样间隔：每 N 个骨架帧取 1 帧，需与训练一致（默认 1）",
+    )
     _add_logging_args(p_eval)
     p_eval.set_defaults(func=_cmd_eval)
 

@@ -189,12 +189,15 @@ class RealtimePickingPredictor:
             timestamp_sec=timestamp_sec,
         )
         self._remember_frame(frame_data)
+        sample_frames = [self._frame_history[i] for i in sorted(self._frame_history.keys())]
         ctx = FeatureContext(
             record=self.record,
             frame=frame_data,
             box_index=self.box_index,
             box_tokens=self.box_tokens,
             frame_index=self._frame_history,
+            sample_frames=sample_frames,
+            _sample_index=FeatureContext._sample_index_from(sample_frames),
         )
         preds = [
             self.model.predict_frame(
