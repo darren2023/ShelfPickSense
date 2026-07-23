@@ -14,7 +14,7 @@ from loguru import logger
 
 from analysis.dataset import build_dataset, filter_empty_skeleton_frames, load_serialized_dataset, save_dataset
 from analysis.evaluation import Evaluator, ModelEvaluation, compare_reports_with_baseline, save_report
-from analysis.rule_baseline import RULE_BASELINE_NAME, run_rule_baseline
+from analysis.rule_baseline import RULE_COLLISION_BASELINE_NAME, run_external_collision_baseline
 from analysis.features.registry import default_registry
 from analysis.features.selection import FeatureSelection
 from analysis.models import SUPPORTED_MODEL_NAMES
@@ -176,11 +176,16 @@ def run_benchmark(
     predictions_filename = prediction_filename_for_records(eval_records)
 
     if baseline_report is None:
-        logger.info("benchmark 运行规则基线: {}", RULE_BASELINE_NAME)
-        baseline_report = run_rule_baseline(
+        logger.info("benchmark 运行规则基线: {}", RULE_COLLISION_BASELINE_NAME)
+        baseline_report = run_external_collision_baseline(
             eval_records,
             data_dir=str(eval_data_dir.resolve()),
-            output_dir=output_dir / RULE_BASELINE_NAME,
+            output_dir=output_dir / RULE_COLLISION_BASELINE_NAME,
+            video_fps=15.0,
+            alarm_min_consecutive_frames=3,
+            alarm_cooldown_frames=0,
+            pose_frame_interval=feature_frame_stride,
+            model_name=RULE_COLLISION_BASELINE_NAME,
             predictions_filename=predictions_filename,
         )
     else:
@@ -384,12 +389,12 @@ def _recommendation(comparison: list[dict[str, Any]]) -> tuple[str, str]:
         baseline_delta = float(best.get("macro_f1_delta") or 0.0)
         if beats:
             reason += (
-                f" 相对规则基线 `{RULE_BASELINE_NAME}`（Macro-F1 {_fmt(baseline_row.get('macro_f1'))}），"
+                f" 相对规则基线 `{RULE_COLLISION_BASELINE_NAME}`（Macro-F1 {_fmt(baseline_row.get('macro_f1'))}），"
                 f"推荐模型 Macro-F1 高出 {_fmt(baseline_delta)}，已超过基线。"
             )
         else:
             reason += (
-                f" 但相对规则基线 `{RULE_BASELINE_NAME}`（Macro-F1 {_fmt(baseline_row.get('macro_f1'))}）"
+                f" 但相对规则基线 `{RULE_COLLISION_BASELINE_NAME}`（Macro-F1 {_fmt(baseline_row.get('macro_f1'))}）"
                 f"仍低 {_fmt(abs(baseline_delta))}，尚未超过基线。"
             )
     return best_model, reason
@@ -402,7 +407,7 @@ def _baseline_summary(comparison: list[dict[str, Any]]) -> str:
     beats = [row for row in ml_rows if row.get("beats_baseline")]
     total = len(ml_rows)
     if not beats:
-        return f"本次评测中，{total} 个 ML 模型均未超过规则基线 `{RULE_BASELINE_NAME}`。"
+        return f"本次评测中，{total} 个 ML 模型均未超过规则基线 `{RULE_COLLISION_BASELINE_NAME}`。"
     names = "、".join(f"`{row['model_name']}`" for row in beats)
     return f"超过规则基线的模型（{len(beats)}/{total}）：{names}。"
 
@@ -441,7 +446,7 @@ def _write_benchmark_report(result: BenchmarkResult, output_dir: Path) -> Path:
         [
             "## 规则基线",
             "",
-            f"- 基线方法：`{RULE_BASELINE_NAME}`（与 event_engine 碰撞规则 + M-of-N 门控一致）",
+            f"- 基线方法：`{RULE_COLLISION_BASELINE_NAME}`（与 event_engine 碰撞规则 + M-of-N 门控一致）",
         ]
     )
     if result.baseline_report is not None:
@@ -483,7 +488,7 @@ def _write_benchmark_report(result: BenchmarkResult, output_dir: Path) -> Path:
             "## 输出文件",
             "",
             "- `benchmark_summary.json`：完整训练、测试与对比结果。",
-            f"- `{RULE_BASELINE_NAME}/eval_report.json`：规则基线评测报告。",
+            f"- `{RULE_COLLISION_BASELINE_NAME}/eval_report.json`：规则基线评测报告。",
             "- `<model>/train_result.json`：单模型训练结果。",
             "- `<model>/eval_report.json`：单模型 Test 集评测报告。",
             "- `<model>/eval_predictions_*.json`：单模型 Test 集逐帧预测结果。",

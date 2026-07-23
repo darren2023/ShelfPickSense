@@ -17,7 +17,7 @@ from analysis.feature_benchmark import load_feature_benchmark_plan, regenerate_f
 from analysis.features.selection import load_feature_selection
 from analysis.models import SUPPORTED_MODEL_NAMES
 from analysis.realtime import RealtimePickingPredictor
-from analysis.rule_baseline import RealtimeRulePredictor, evaluate_rule_baseline
+from analysis.rule_baseline import run_external_collision_baseline
 from analysis.train import train_model
 
 
@@ -116,18 +116,20 @@ def _cmd_eval_rule(args: argparse.Namespace) -> int:
     logger.info("开始规则基线评测: data_dir={}, output={}", data_dir, output_dir)
 
     records = load_all_records(data_dir)
-    predictions_out = (
-        Path(args.predictions)
-        if args.predictions
-        else output_dir / prediction_filename_for_records(records)
-    )
-    report = evaluate_rule_baseline(
+    predictions_filename = str(Path(args.predictions)) if args.predictions else prediction_filename_for_records(records)
+    report = run_external_collision_baseline(
         records,
         data_dir=str(data_dir.resolve()),
-        predictions_output_path=predictions_out,
+        output_dir=output_dir,
+        video_fps=15.0,
+        alarm_min_consecutive_frames=3,
+        alarm_cooldown_frames=0,
+        pose_frame_interval=args.pose_frame_interval,
+        predictions_filename=predictions_filename,
     )
     report_path = Path(args.report) if args.report else output_dir / "eval_report.json"
-    save_report(report, report_path)
+    if Path(report_path).resolve() != (output_dir / "eval_report.json").resolve():
+        save_report(report, report_path)
     logger.info(
         "规则基线评测完成: macro_f1={:.4f}, picking_f1={:.4f}, recall={:.4f}, box_f1={:.4f}",
         report.picking.macro_f1,
@@ -137,128 +139,25 @@ def _cmd_eval_rule(args: argparse.Namespace) -> int:
     )
     _log_json(report.to_dict())
     logger.info("报告已保存: {}", report_path)
-    logger.info("预测结果已保存: {}", predictions_out)
+    predictions_path = Path(predictions_filename)
+    if not predictions_path.is_absolute():
+        predictions_path = output_dir / predictions_path
+    logger.info("预测结果已保存: {}", predictions_path)
     return 0
 
 
-def _infer_rule_output_path(
+def _infer_jsonl_output_path(
     output: str,
     record_id: str,
     *,
     multi_record: bool,
 ) -> Path:
-    """解析 infer-rule 的 JSONL 输出路径。"""
     out = Path(output)
     if multi_record and out.suffix != ".jsonl":
         out.mkdir(parents=True, exist_ok=True)
         return out / f"{record_id}.jsonl"
     out.parent.mkdir(parents=True, exist_ok=True)
     return out
-
-
-def _run_infer_rule_record(
-    record,
-    *,
-    infer_width: float | None,
-    infer_height: float | None,
-    fps: float,
-    max_frames: int,
-    realtime: bool,
-    video: str,
-    out_file,
-) -> int:
-    """对单条记录执行规则逐帧推理，返回处理的帧数。"""
-    predictor = RealtimeRulePredictor.from_record_dir(
-        record.record_dir,
-        infer_width=infer_width if infer_width is not None else record.infer_width,
-        infer_height=infer_height if infer_height is not None else record.infer_height,
-        video_fps=fps,
-    )
-
-    frames = record.frames()
-    if max_frames > 0:
-        frames = frames[:max_frames]
-    frame_interval = 1.0 / fps if realtime and fps > 0 else 0.0
-    logger.info(
-        "开始规则逐帧推理: record={}, video={}, frames={}, realtime={}, fps={}",
-        record.record_id,
-        video or "",
-        len(frames),
-        realtime,
-        fps,
-    )
-
-    for frame in frames:
-        pred = predictor.predict_frame(
-            frame.persons,
-            frame_idx=frame.frame_idx,
-            timestamp_sec=frame.timestamp_sec,
-        )
-        line = json.dumps(pred.to_dict(), ensure_ascii=False)
-        if out_file:
-            out_file.write(line + "\n")
-        _log_jsonl(line)
-        if frame_interval > 0:
-            time.sleep(frame_interval)
-    return len(frames)
-
-
-def _cmd_infer_rule(args: argparse.Namespace) -> int:
-    from analysis.records import load_all_records
-
-    input_path = Path(args.record_dir)
-    records = load_all_records(input_path)
-    multi_record = len(records) > 1
-    merge_output = bool(args.output) and multi_record and Path(args.output).suffix == ".jsonl"
-
-    logger.info(
-        "规则逐帧推理: input={}, records={}, output={}, merge_output={}",
-        input_path,
-        len(records),
-        args.output or "",
-        merge_output,
-    )
-
-    merge_file = None
-    total_frames = 0
-    try:
-        if merge_output:
-            merge_path = Path(args.output)
-            merge_path.parent.mkdir(parents=True, exist_ok=True)
-            merge_file = merge_path.open("w", encoding="utf-8")
-
-        for record in records:
-            out_file = merge_file
-            close_after = False
-            if out_file is None and args.output:
-                out_path = _infer_rule_output_path(
-                    args.output,
-                    record.record_id,
-                    multi_record=multi_record,
-                )
-                out_file = out_path.open("w", encoding="utf-8")
-                close_after = True
-
-            try:
-                total_frames += _run_infer_rule_record(
-                    record,
-                    infer_width=args.infer_width,
-                    infer_height=args.infer_height,
-                    fps=args.fps,
-                    max_frames=args.max_frames,
-                    realtime=args.realtime,
-                    video=args.video,
-                    out_file=out_file,
-                )
-            finally:
-                if close_after and out_file:
-                    out_file.close()
-    finally:
-        if merge_file:
-            merge_file.close()
-
-    logger.info("规则逐帧推理完成: records={}, frames={}", len(records), total_frames)
-    return 0
 
 
 def _run_infer_collision_record(
@@ -432,7 +331,7 @@ def _cmd_infer_collision(args: argparse.Namespace) -> int:
                 # 确定输出路径
                 if args.output:
                     # 用户指定了输出路径
-                    out_path = _infer_rule_output_path(
+                    out_path = _infer_jsonl_output_path(
                         args.output,
                         record.record_id,
                         multi_record=multi_record,
@@ -468,30 +367,6 @@ def _cmd_infer_collision(args: argparse.Namespace) -> int:
             merge_file.close()
 
     logger.info("collision.py 逐帧推理完成: records={}, frames={}", len(records), total_frames)
-    return 0
-
-
-def _cmd_viz_frames(args: argparse.Namespace) -> int:
-    from analysis.frame_viz import write_frame_viz_html
-
-    record_dir = Path(args.record_dir)
-    output_path = Path(args.output)
-    predictions = Path(args.predictions) if args.predictions else None
-    logger.info(
-        "生成帧可视化: record={}, frames={}.., max={}, output={}",
-        record_dir,
-        args.start_frame,
-        args.max_frames,
-        output_path,
-    )
-    out = write_frame_viz_html(
-        record_dir,
-        output_path,
-        max_frames=args.max_frames,
-        start_frame=args.start_frame,
-        predictions_path=predictions,
-    )
-    logger.info("可视化页面已生成: {}", out.resolve())
     return 0
 
 
@@ -1004,6 +879,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_eval_rule.add_argument("--output", required=True, help="评测结果输出目录")
     p_eval_rule.add_argument("--report", default="", help="评测报告路径（默认 <output>/eval_report.json）")
     p_eval_rule.add_argument("--predictions", default="", help="预测结果路径（默认 <output>/eval_predictions_*.json）")
+    p_eval_rule.add_argument("--pose-frame-interval", type=int, default=2, help="姿态帧间隔（默认 2）")
     _add_logging_args(p_eval_rule)
     p_eval_rule.set_defaults(func=_cmd_eval_rule)
 
@@ -1117,26 +993,6 @@ def build_parser() -> argparse.ArgumentParser:
     _add_logging_args(p_serve)
     p_serve.set_defaults(func=_cmd_serve_inference)
 
-    p_infer_rule = sub.add_parser("infer-rule", help="用规则碰撞方法模拟视频流逐帧推理")
-    p_infer_rule.add_argument(
-        "--record-dir",
-        required=True,
-        help="记录目录或包含多条记录的父目录（需含 skeleton.parquet 与 annotation.json）",
-    )
-    p_infer_rule.add_argument("--video", default="", help="原始视频路径，仅用于日志标识")
-    p_infer_rule.add_argument("--infer-width", type=float, default=None, help="推理坐标宽度")
-    p_infer_rule.add_argument("--infer-height", type=float, default=None, help="推理坐标高度")
-    p_infer_rule.add_argument("--fps", type=float, default=25.0, help="模拟流帧率")
-    p_infer_rule.add_argument("--max-frames", type=int, default=0, help="最多推理帧数，0 表示全部")
-    p_infer_rule.add_argument("--realtime", action="store_true", help="按 fps sleep，模拟真实时间流")
-    p_infer_rule.add_argument(
-        "--output",
-        default="",
-        help="JSONL 输出：单条记录为文件路径；多条记录时为目录（逐条生成 {record_id}.jsonl）或合并 .jsonl 文件",
-    )
-    _add_logging_args(p_infer_rule)
-    p_infer_rule.set_defaults(func=_cmd_infer_rule)
-
     p_infer_collision = sub.add_parser("infer-collision", help="调用 box_human_det/collision.py 模拟视频流逐帧推理")
     p_infer_collision.add_argument(
         "--record-dir",
@@ -1174,19 +1030,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_logging_args(p_infer_collision)
     p_infer_collision.set_defaults(func=_cmd_infer_collision)
-
-    p_viz = sub.add_parser("viz-frames", help="生成交互 HTML，叠加绘制骨架与货框标注")
-    p_viz.add_argument("--record-dir", required=True, help="记录目录")
-    p_viz.add_argument("--output", required=True, help="输出 HTML 文件路径")
-    p_viz.add_argument("--max-frames", type=int, default=10, help="最多可视化帧数（默认 10）")
-    p_viz.add_argument("--start-frame", type=int, default=1, help="起始帧索引（默认 1）")
-    p_viz.add_argument(
-        "--predictions",
-        default="",
-        help="可选：infer-rule 输出的 JSONL，用于叠加碰撞/报警高亮",
-    )
-    _add_logging_args(p_viz)
-    p_viz.set_defaults(func=_cmd_viz_frames)
 
     p_feature_curves = sub.add_parser("viz-feature-curves", help="generate feature curve HTML from frame_features.parquet")
     p_feature_curves.add_argument("--features-dir", required=True, help="export-features output directory")

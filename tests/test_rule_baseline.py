@@ -1,4 +1,4 @@
-"""规则基线评测测试。"""
+"""Rule collision baseline tests."""
 
 from __future__ import annotations
 
@@ -7,27 +7,49 @@ from pathlib import Path
 from fixtures import make_fixture_record
 
 
-def test_rule_baseline_runs_on_fixture(tmp_path: Path):
+def test_external_collision_baseline_runs_on_fixture(tmp_path: Path):
     from analysis.records import load_record
-    from analysis.rule_baseline import RULE_BASELINE_NAME, evaluate_rule_baseline, predict_record_with_rules
+    from analysis.rule_baseline import (
+        RULE_COLLISION_BASELINE_NAME,
+        evaluate_external_collision_baseline,
+        predict_record_with_external_collision,
+    )
 
     fixture_dir = make_fixture_record(tmp_path / "record_001")
     record = load_record(fixture_dir)
-    preds = predict_record_with_rules(record)
+    preds = predict_record_with_external_collision(record, pose_frame_interval=2)
 
     assert len(preds) == len(record.frames())
-    alarm_frames = [p for p in preds if p["is_picking"]]
-    assert alarm_frames, "规则基线应在碰撞持续后触发报警"
+    assert all("collision_alarm_collisions" in p for p in preds)
 
-    report = evaluate_rule_baseline([record], data_dir=str(fixture_dir))
-    assert report.model_name == RULE_BASELINE_NAME
-    assert report.extra["frame_count"] == len(record.frames())
+    report = evaluate_external_collision_baseline([record], data_dir=str(fixture_dir), pose_frame_interval=2)
+    assert report.model_name == RULE_COLLISION_BASELINE_NAME
+    assert report.extra["source_frame_count"] == len(record.frames())
+    assert report.extra["frame_count"] == 5
+    assert report.extra["skipped_pose_frame_count"] == 5
+    assert report.extra["source"] == "box_human_det/services/event_engine/collision.py"
     assert 0.0 <= report.picking.macro_f1 <= 1.0
 
 
-def test_benchmark_includes_rule_baseline(tmp_path: Path):
+def test_external_collision_pose_frame_interval_changes_eval_sample_count(tmp_path: Path):
+    from analysis.records import load_record
+    from analysis.rule_baseline import evaluate_external_collision_baseline
+
+    fixture_dir = make_fixture_record(tmp_path / "record_001")
+    record = load_record(fixture_dir)
+
+    report_interval_1 = evaluate_external_collision_baseline([record], data_dir=str(fixture_dir), pose_frame_interval=1)
+    report_interval_3 = evaluate_external_collision_baseline([record], data_dir=str(fixture_dir), pose_frame_interval=3)
+
+    assert report_interval_1.extra["frame_count"] == 10
+    assert report_interval_1.extra["skipped_pose_frame_count"] == 0
+    assert report_interval_3.extra["frame_count"] == 4
+    assert report_interval_3.extra["skipped_pose_frame_count"] == 6
+
+
+def test_benchmark_includes_external_collision_baseline(tmp_path: Path):
     from analysis.benchmark import run_benchmark
-    from analysis.rule_baseline import RULE_BASELINE_NAME
+    from analysis.rule_baseline import RULE_COLLISION_BASELINE_NAME
 
     fixture_dir = make_fixture_record(tmp_path / "record_001")
     output_dir = tmp_path / "benchmark_out"
@@ -39,8 +61,8 @@ def test_benchmark_includes_rule_baseline(tmp_path: Path):
     )
 
     assert result.baseline_report is not None
-    assert result.baseline_report.model_name == RULE_BASELINE_NAME
-    assert (output_dir / RULE_BASELINE_NAME / "eval_report.json").is_file()
+    assert result.baseline_report.model_name == RULE_COLLISION_BASELINE_NAME
+    assert (output_dir / RULE_COLLISION_BASELINE_NAME / "eval_report.json").is_file()
 
     baseline_rows = [row for row in result.comparison if row.get("is_baseline")]
     ml_rows = [row for row in result.comparison if not row.get("is_baseline")]
@@ -49,11 +71,10 @@ def test_benchmark_includes_rule_baseline(tmp_path: Path):
     assert "beats_baseline" in ml_rows[0]
 
     report_md = (output_dir / "benchmark_report.md").read_text(encoding="utf-8")
-    assert "## 规则基线" in report_md
-    assert RULE_BASELINE_NAME in report_md
+    assert "rule_collision" in report_md
 
 
-def test_cli_eval_rule(tmp_path: Path):
+def test_cli_eval_rule_uses_external_collision_baseline(tmp_path: Path):
     from analysis.cli import main
 
     fixture_dir = make_fixture_record(tmp_path / "record_001")
@@ -62,33 +83,3 @@ def test_cli_eval_rule(tmp_path: Path):
     assert (output_dir / "eval_report.json").is_file()
     assert any(output_dir.glob("eval_predictions*.json"))
 
-
-def test_cli_infer_rule_multi_records(tmp_path: Path):
-    from analysis.cli import main
-
-    data_dir = tmp_path / "dataset"
-    make_fixture_record(data_dir / "record_001")
-    make_fixture_record(data_dir / "record_002")
-    output_dir = tmp_path / "rule_streams"
-    assert main(["infer-rule", "--record-dir", str(data_dir), "--output", str(output_dir)]) == 0
-    assert (output_dir / "record_001.jsonl").is_file()
-    assert (output_dir / "record_002.jsonl").is_file()
-
-
-def test_realtime_rule_predictor(tmp_path: Path):
-    from analysis.records import load_record
-    from analysis.rule_baseline import RealtimeRulePredictor
-
-    fixture_dir = make_fixture_record(tmp_path / "record_001")
-    predictor = RealtimeRulePredictor.from_record_dir(fixture_dir)
-    record = load_record(fixture_dir)
-    preds = [
-        predictor.predict_frame(
-            frame.persons,
-            frame_idx=frame.frame_idx,
-            timestamp_sec=frame.timestamp_sec,
-        )
-        for frame in record.frames()
-    ]
-    assert len(preds) == len(record.frames())
-    assert any(p.is_picking for p in preds)

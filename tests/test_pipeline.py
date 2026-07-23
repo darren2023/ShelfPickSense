@@ -159,7 +159,7 @@ def test_benchmark_runs_multiple_models(fixture_data_dir: Path, tmp_path: Path):
 
     assert [r.model_name for r in result.reports] == ["sklearn_rf", "sklearn_logistic"]
     assert len(result.comparison) == 3
-    assert result.comparison[0]["model_name"] == "rule_baseline"
+    assert result.comparison[0]["model_name"] == "rule_collision"
     assert result.comparison[0].get("is_baseline") is True
     ml_rows = [row for row in result.comparison if not row.get("is_baseline")]
     assert len(ml_rows) == 2
@@ -167,7 +167,7 @@ def test_benchmark_runs_multiple_models(fixture_data_dir: Path, tmp_path: Path):
     assert "beats_baseline" in ml_rows[0]
     assert "negative_f1" in ml_rows[0]
     assert result.baseline_report is not None
-    assert (output_dir / "rule_baseline" / "eval_report.json").is_file()
+    assert (output_dir / "rule_collision" / "eval_report.json").is_file()
     assert (output_dir / "sklearn_rf" / "eval_report.json").is_file()
     assert (output_dir / "sklearn_rf" / "eval_predictions_record_001.json").is_file()
     assert (output_dir / "sklearn_logistic" / "eval_report.json").is_file()
@@ -262,8 +262,6 @@ def test_cli_benchmark_features_runs_multiple_feature_sets(tmp_path: Path):
     assert (run_dir / "all_features" / "benchmark_summary.json").is_file()
     assert (run_dir / "selected" / "benchmark_summary.json").is_file()
     assert (run_dir / "rule_collision" / "eval_report.json").is_file()
-    assert not (run_dir / "all_features" / "rule_baseline").exists()
-    assert not (run_dir / "selected" / "rule_baseline").exists()
     assert not (output_dir / "feature_benchmark_summary.json").exists()
 
     summary = json.loads((run_dir / "feature_benchmark_summary.json").read_text(encoding="utf-8"))

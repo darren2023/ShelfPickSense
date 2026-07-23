@@ -79,11 +79,11 @@ def compare_record(record_dir: Path) -> Dict:
                     'collision_infer_base': json_val,
                 })
 
-        # 对比 alarm (collision_alarm_collisions vs rule_alarm_collisions)
+        # 对比 alarm
         alarm_diff = []
         for frame_idx in sorted(common_frames):
             jsonl_val = set(jsonl_by_frame.get(frame_idx, {}).get('collision_alarm_collisions', []))
-            json_val = set(json_by_frame.get(frame_idx, {}).get('rule_alarm_collisions', []))
+            json_val = set(json_by_frame.get(frame_idx, {}).get('collision_alarm_collisions', []))
             if jsonl_val != json_val:
                 alarm_diff.append({
                     'frame_idx': frame_idx,
@@ -91,11 +91,11 @@ def compare_record(record_dir: Path) -> Dict:
                     'collision_infer_base': list(json_val),
                 })
 
-        # 对比 collisions (collision_collisions vs rule_collisions)
+        # 对比 collisions
         collision_diff = []
         for frame_idx in sorted(common_frames):
             jsonl_val = set(jsonl_by_frame.get(frame_idx, {}).get('collision_collisions', []))
-            json_val = set(json_by_frame.get(frame_idx, {}).get('rule_collisions', []))
+            json_val = set(json_by_frame.get(frame_idx, {}).get('collision_collisions', []))
             if jsonl_val != json_val:
                 collision_diff.append({
                     'frame_idx': frame_idx,
@@ -115,7 +115,7 @@ def compare_record(record_dir: Path) -> Dict:
             'jsonl_picking_count': jsonl_picking_count,
             'json_picking_count': json_picking_count,
             'jsonl_alarm_count': sum(1 for d in jsonl_data if d.get('collision_alarm_collisions')),
-            'json_alarm_count': sum(1 for d in json_data if d.get('rule_alarm_collisions')),
+            'json_alarm_count': sum(1 for d in json_data if d.get('collision_alarm_collisions')),
         }
         result['differences'] = {
             'is_picking_count': len(picking_diff),
