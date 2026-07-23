@@ -1,0 +1,11 @@
+{
+  "frame_features": [
+    "skeleton",
+    "speed",
+    "stance",
+    "rule.any_collision"
+  ],
+  "box_features": [
+    "rule"
+  ]
+}
