@@ -44,6 +44,16 @@ def _event_frame_idx(event: dict[str, Any]) -> int:
         return 0
 
 
+def _event_person_track_id(event: dict[str, Any]) -> int | None:
+    value = event.get("person_track_id")
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _event_key(event: dict[str, Any]) -> tuple[str, str]:
     return str(event.get("shelf_code") or "").strip(), str(event.get("box_id") or "").strip()
 
@@ -53,7 +63,7 @@ def _compact_event(event: dict[str, Any]) -> dict[str, Any]:
         "event_type": str(event.get("event_type") or ""),
         "frame_idx": _event_frame_idx(event),
         "is_pick": bool(event.get("is_pick")),
-        "person_track_id": event.get("person_track_id"),
+        "person_track_id": _event_person_track_id(event),
         "shelf_code": str(event.get("shelf_code") or "").strip(),
         "box_id": str(event.get("box_id") or "").strip(),
     }

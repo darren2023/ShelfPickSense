@@ -124,3 +124,15 @@ def test_analyze_review_v2_splits_same_box_when_frame_gap_exceeds_limit():
     assert payload["group_count"] == 2
     assert payload["groups"][0]["frame_indices"] == [1, 2]
     assert payload["groups"][1]["frame_indices"] == [103, 104]
+
+
+def test_analyze_review_v2_normalizes_person_track_ids_to_int():
+    from analysis.review_v2_analysis import analyze_review_v2_payload
+
+    event = _event(1)
+    event["person_track_id"] = "2"
+
+    payload = analyze_review_v2_payload({"schema": 2, "verified_true": [event]}, record_id="record_001")
+
+    assert payload["groups"][0]["person_track_ids"] == [2]
+    assert type(payload["groups"][0]["person_track_ids"][0]) is int
