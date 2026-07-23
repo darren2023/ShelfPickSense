@@ -282,6 +282,14 @@ def _external_collision_boxes(record: RecordData) -> list[dict[str, Any]]:
     return boxes
 
 
+def is_pose_frame_processed(frame_idx: int, pose_frame_interval: int) -> bool:
+    """与 infer-collision / predict 跳帧规则一致：仅这些帧会调用 collision.process。"""
+    interval = max(1, int(pose_frame_interval or 1))
+    if interval <= 1:
+        return True
+    return (int(frame_idx) - 1) % interval == 0
+
+
 def predict_record_with_external_collision(
     record: RecordData,
     *,
@@ -302,15 +310,16 @@ def predict_record_with_external_collision(
 
     results: list[dict[str, Any]] = []
     for frame in record.frames():
-        if pose_frame_interval > 1 and (frame.frame_idx - 1) % pose_frame_interval != 0:
-            output = {"collisions": [], "alarm_collisions": []}
-        else:
+        processed = is_pose_frame_processed(frame.frame_idx, pose_frame_interval)
+        if processed:
             output = processor.process(
                 {
                     "frame_idx": frame.frame_idx,
                     "persons": frame.persons,
                 }
             )
+        else:
+            output = {"collisions": [], "alarm_collisions": []}
         alarm_tokens = list(output.get("alarm_collisions") or [])
         collision_tokens = list(output.get("collisions") or [])
         is_picking = bool(alarm_tokens)
@@ -323,6 +332,7 @@ def predict_record_with_external_collision(
                 "predicted_box_tokens": alarm_tokens if is_picking else collision_tokens,
                 "collision_collisions": collision_tokens,
                 "collision_alarm_collisions": alarm_tokens,
+                "pose_frame_processed": processed,
             }
         )
     return results
@@ -421,6 +431,8 @@ def evaluate_external_collision_baseline(
     true_boxes: list[set[str]] = []
     pred_boxes: list[set[str]] = []
     prediction_rows: list[dict[str, Any]] = []
+    source_frame_count = 0
+    skipped_frame_count = 0
     CollisionProcessor = _load_external_collision_processor()
 
     for record in records:
@@ -435,6 +447,11 @@ def evaluate_external_collision_baseline(
         pred_by_frame = {p["frame_idx"]: p for p in preds}
 
         for frame in record.frames():
+            source_frame_count += 1
+            if not is_pose_frame_processed(frame.frame_idx, pose_frame_interval):
+                skipped_frame_count += 1
+                continue
+
             label = record.labels.label_for(frame.frame_idx)
             pred = pred_by_frame.get(frame.frame_idx, {})
             true_is_picking = label.is_picking
@@ -456,6 +473,7 @@ def evaluate_external_collision_baseline(
                     "box_exact_match": set(true_box_tokens) == set(pred_box_tokens),
                     "collision_collisions": list(pred.get("collision_collisions") or []),
                     "collision_alarm_collisions": list(pred.get("collision_alarm_collisions") or []),
+                    "pose_frame_processed": True,
                 }
             )
 
@@ -466,7 +484,9 @@ def evaluate_external_collision_baseline(
     picking = compute_picking_metrics(y_true, y_pred)
     box = compute_box_metrics(true_boxes, pred_boxes)
     logger.info(
-        "外部 collision.py 基线指标: macro_f1={:.4f}, picking_f1={:.4f}, box_f1={:.4f}",
+        "外部 collision.py 基线指标: eval_frames={}, skipped_frames={}, macro_f1={:.4f}, picking_f1={:.4f}, box_f1={:.4f}",
+        len(y_true),
+        skipped_frame_count,
         picking.macro_f1,
         picking.f1,
         box.micro_f1,
@@ -481,6 +501,8 @@ def evaluate_external_collision_baseline(
             "frame_count": len(y_true),
             "positive_frames": sum(y_true),
             "box_eval_frames": len(true_boxes),
+            "source_frame_count": source_frame_count,
+            "skipped_frame_count": skipped_frame_count,
             "kind": model_name,
             "source": "box_human_det/services/event_engine/collision.py",
             "video_fps": float(video_fps),
