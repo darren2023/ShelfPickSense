@@ -407,28 +407,20 @@ print(pred.is_picking, pred.rule_alarm_collisions)
 
 ## 评测指标
 
-帧级取货检测指标：
+完整定义见 [metrics.md](metrics.md)（含 `benchmark_report.md` 各列含义、公式与阅读建议）。
 
-- `accuracy`
-- `precision / recall / f1`：以“取货”为正类。
-- `negative_precision / negative_recall / negative_f1`：以“非取货”为负类。
-- `macro_f1`：正类 F1 与负类 F1 的平均值。
-- `balanced_accuracy`：正类 recall 与负类 recall 的平均值。
+帧级取货检测（正类 = 取货）核心字段：
 
-货框识别指标：
+- `macro_f1`：取货 F1 与非取货 F1 的平均值（**报告排序主指标**）
+- `balanced_accuracy`：取货 recall 与非取货 recall 的平均值
+- `precision / recall / f1`：以取货为正类
 
-- `exact_match_ratio`
-- `any_hit_ratio`
-- `micro_precision`
-- `micro_recall`
-- `micro_f1`
+货框识别（仅在真值取货且有 `confirmed_box_tokens` 的帧上）：
 
-样本不均衡时，建议优先关注：
+- `exact_match_ratio`：预测框集合与真值完全一致的比例
+- `micro_f1`：框 token 级 Micro-F1
 
-- `macro_f1`
-- `balanced_accuracy`
-- `picking_recall`
-- `box_micro_f1`
+样本不均衡时，建议优先关注：`macro_f1`、`balanced_accuracy`、取货 recall、`box_micro_f1`。
 
 ## 批量 Benchmark
 
@@ -658,7 +650,7 @@ models/train_test/
   ...
 ```
 
-`benchmark_report.md` 会汇总 Train 数据规模、Test 集各模型指标，并按 `macro_f1` 给出推荐模型与结论。结论会同时列出 `balanced_accuracy`、取货 recall、货框 `micro_f1`，以及相对规则基线 `rule_baseline` 是否更优。
+`benchmark_report.md` 会汇总 Train 数据规模、Test 集各模型指标，并按 `macro_f1` 给出推荐模型与结论。各指标定义见 [metrics.md](metrics.md)。
 
 ## 日志
 

@@ -412,6 +412,8 @@ def _write_batch_report(batch: FeatureBenchmarkBatchResult, output_dir: Path) ->
         f"- 特征帧采样间隔：`{batch.feature_frame_stride}`",
         f"- 特征配置组数：`{len(batch.sets)}`",
         "",
+        "指标定义见项目文档 `docs/metrics.md`。",
+        "",
         "## 各特征配置最佳模型汇总",
         "",
         _best_models_summary_table(batch),

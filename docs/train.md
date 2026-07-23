@@ -281,6 +281,8 @@ uv run python main.py eval \
   --predictions outputs/predictions.json
 ```
 
+指标含义见 [metrics.md](metrics.md)。
+
 ---
 
 ## 9. 批量训练与对比（可选）
@@ -298,6 +300,8 @@ uv run python main.py benchmark \
 ```
 
 多特征配置批量实验见 [usage.md](usage.md) 中「多特征配置批量 Benchmark」与 `configs/feature_benchmark.example.json`。
+
+输出 `benchmark_report.md` 中各列指标定义见 [metrics.md](metrics.md)。
 
 ---
 
