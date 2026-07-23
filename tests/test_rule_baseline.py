@@ -7,6 +7,54 @@ from pathlib import Path
 from fixtures import make_fixture_record
 
 
+def test_is_pose_frame_processed():
+    from analysis.rule_baseline import is_pose_frame_processed
+
+    assert is_pose_frame_processed(1, 1) is True
+    assert is_pose_frame_processed(99, 1) is True
+    assert is_pose_frame_processed(1, 2) is True
+    assert is_pose_frame_processed(2, 2) is False
+    assert is_pose_frame_processed(3, 2) is True
+    assert is_pose_frame_processed(4, 2) is False
+
+
+def test_external_collision_eval_skips_unprocessed_frames(tmp_path: Path, monkeypatch):
+    from analysis.records import load_record
+    from analysis.rule_baseline import evaluate_external_collision_baseline, is_pose_frame_processed
+
+    fixture_dir = make_fixture_record(tmp_path / "record_001")
+    record = load_record(fixture_dir)
+    all_frames = list(record.frames())
+    eval_frames = [f for f in all_frames if is_pose_frame_processed(f.frame_idx, 2)]
+
+    def fake_predict(_record, **kwargs):
+        return [
+            {
+                "frame_idx": frame.frame_idx,
+                "is_picking": True,
+                "picking_prob": 1.0,
+                "predicted_box_tokens": [],
+                "collision_collisions": [],
+                "collision_alarm_collisions": [],
+                "pose_frame_processed": is_pose_frame_processed(frame.frame_idx, kwargs.get("pose_frame_interval", 1)),
+            }
+            for frame in all_frames
+        ]
+
+    monkeypatch.setattr("analysis.rule_baseline.predict_record_with_external_collision", fake_predict)
+    monkeypatch.setattr("analysis.rule_baseline._load_external_collision_processor", lambda: object())
+
+    report = evaluate_external_collision_baseline(
+        [record],
+        data_dir=str(fixture_dir),
+        pose_frame_interval=2,
+    )
+    assert report.extra["frame_count"] == len(eval_frames)
+    assert report.extra["skipped_frame_count"] == len(all_frames) - len(eval_frames)
+    assert report.extra["source_frame_count"] == len(all_frames)
+    assert report.picking.recall == 1.0
+
+
 def test_rule_baseline_runs_on_fixture(tmp_path: Path):
     from analysis.records import load_record
     from analysis.rule_baseline import RULE_BASELINE_NAME, evaluate_rule_baseline, predict_record_with_rules
@@ -27,7 +75,7 @@ def test_rule_baseline_runs_on_fixture(tmp_path: Path):
 
 def test_benchmark_includes_rule_baseline(tmp_path: Path):
     from analysis.benchmark import run_benchmark
-    from analysis.rule_baseline import RULE_BASELINE_NAME
+    from analysis.rule_baseline import RULE_COLLISION_BASELINE_NAME
 
     fixture_dir = make_fixture_record(tmp_path / "record_001")
     output_dir = tmp_path / "benchmark_out"
@@ -39,8 +87,8 @@ def test_benchmark_includes_rule_baseline(tmp_path: Path):
     )
 
     assert result.baseline_report is not None
-    assert result.baseline_report.model_name == RULE_BASELINE_NAME
-    assert (output_dir / RULE_BASELINE_NAME / "eval_report.json").is_file()
+    assert result.baseline_report.model_name == RULE_COLLISION_BASELINE_NAME
+    assert (output_dir / RULE_COLLISION_BASELINE_NAME / "eval_report.json").is_file()
 
     baseline_rows = [row for row in result.comparison if row.get("is_baseline")]
     ml_rows = [row for row in result.comparison if not row.get("is_baseline")]
@@ -50,7 +98,7 @@ def test_benchmark_includes_rule_baseline(tmp_path: Path):
 
     report_md = (output_dir / "benchmark_report.md").read_text(encoding="utf-8")
     assert "## 规则基线" in report_md
-    assert RULE_BASELINE_NAME in report_md
+    assert RULE_COLLISION_BASELINE_NAME in report_md
 
 
 def test_cli_eval_rule(tmp_path: Path):

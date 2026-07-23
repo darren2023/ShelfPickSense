@@ -13,8 +13,15 @@ from typing import Any
 from loguru import logger
 
 from analysis.dataset import build_dataset, filter_empty_skeleton_frames, load_serialized_dataset, save_dataset
-from analysis.evaluation import Evaluator, ModelEvaluation, compare_reports_with_baseline, save_report
-from analysis.rule_baseline import RULE_BASELINE_NAME, run_rule_baseline
+from analysis.evaluation import (
+    BoxMetrics,
+    Evaluator,
+    ModelEvaluation,
+    PickingMetrics,
+    compare_reports_with_baseline,
+    save_report,
+)
+from analysis.rule_baseline import RULE_COLLISION_BASELINE_NAME, run_external_collision_baseline
 from analysis.features.registry import default_registry
 from analysis.features.selection import FeatureSelection
 from analysis.models import SUPPORTED_MODEL_NAMES
@@ -162,11 +169,15 @@ def run_benchmark(
     predictions_filename = prediction_filename_for_records(eval_records)
 
     if baseline_report is None:
-        logger.info("benchmark 运行规则基线: {}", RULE_BASELINE_NAME)
-        baseline_report = run_rule_baseline(
+        logger.info("benchmark 运行规则基线: {}", RULE_COLLISION_BASELINE_NAME)
+        baseline_report = run_external_collision_baseline(
             eval_records,
             data_dir=str(eval_data_dir.resolve()),
-            output_dir=output_dir / RULE_BASELINE_NAME,
+            output_dir=output_dir / RULE_COLLISION_BASELINE_NAME,
+            video_fps=15.0,
+            alarm_min_consecutive_frames=3,
+            alarm_cooldown_frames=0,
+            pose_frame_interval=frame_stride,
             predictions_filename=predictions_filename,
         )
     else:
@@ -342,7 +353,20 @@ def _ml_comparison_rows(comparison: list[dict[str, Any]]) -> list[dict[str, Any]
     return [row for row in comparison if not row.get("is_baseline")]
 
 
-def _recommendation(comparison: list[dict[str, Any]]) -> tuple[str, str]:
+def _baseline_name(comparison: list[dict[str, Any]], baseline_report: ModelEvaluation | None) -> str:
+    if baseline_report is not None and baseline_report.model_name:
+        return baseline_report.model_name
+    baseline_row = next((row for row in comparison if row.get("is_baseline")), None)
+    if baseline_row is not None:
+        return str(baseline_row.get("model_name") or RULE_COLLISION_BASELINE_NAME)
+    return RULE_COLLISION_BASELINE_NAME
+
+
+def _recommendation(
+    comparison: list[dict[str, Any]],
+    *,
+    baseline_name: str = RULE_COLLISION_BASELINE_NAME,
+) -> tuple[str, str]:
     ml_rows = _ml_comparison_rows(comparison)
     if not ml_rows:
         return "", "没有可用模型结果，无法给出推荐。"
@@ -368,31 +392,36 @@ def _recommendation(comparison: list[dict[str, Any]]) -> tuple[str, str]:
         baseline_delta = float(best.get("macro_f1_delta") or 0.0)
         if beats:
             reason += (
-                f" 相对规则基线 `{RULE_BASELINE_NAME}`（Macro-F1 {_fmt(baseline_row.get('macro_f1'))}），"
+                f" 相对规则基线 `{baseline_name}`（Macro-F1 {_fmt(baseline_row.get('macro_f1'))}），"
                 f"推荐模型 Macro-F1 高出 {_fmt(baseline_delta)}，已超过基线。"
             )
         else:
             reason += (
-                f" 但相对规则基线 `{RULE_BASELINE_NAME}`（Macro-F1 {_fmt(baseline_row.get('macro_f1'))}）"
+                f" 但相对规则基线 `{baseline_name}`（Macro-F1 {_fmt(baseline_row.get('macro_f1'))}）"
                 f"仍低 {_fmt(abs(baseline_delta))}，尚未超过基线。"
             )
     return best_model, reason
 
 
-def _baseline_summary(comparison: list[dict[str, Any]]) -> str:
+def _baseline_summary(
+    comparison: list[dict[str, Any]],
+    *,
+    baseline_name: str = RULE_COLLISION_BASELINE_NAME,
+) -> str:
     ml_rows = _ml_comparison_rows(comparison)
     if not ml_rows:
         return ""
     beats = [row for row in ml_rows if row.get("beats_baseline")]
     total = len(ml_rows)
     if not beats:
-        return f"本次评测中，{total} 个 ML 模型均未超过规则基线 `{RULE_BASELINE_NAME}`。"
+        return f"本次评测中，{total} 个 ML 模型均未超过规则基线 `{baseline_name}`。"
     names = "、".join(f"`{row['model_name']}`" for row in beats)
     return f"超过规则基线的模型（{len(beats)}/{total}）：{names}。"
 
 
 def _write_benchmark_report(result: BenchmarkResult, output_dir: Path) -> Path:
-    best_model, recommendation = _recommendation(result.comparison)
+    baseline_name = _baseline_name(result.comparison, result.baseline_report)
+    best_model, recommendation = _recommendation(result.comparison, baseline_name=baseline_name)
     train = result.train_results[0] if result.train_results else None
     positive_rate = (train.positive_frames / train.frame_count) if train and train.frame_count else 0.0
     report_path = output_dir / "benchmark_report.md"
@@ -405,6 +434,8 @@ def _write_benchmark_report(result: BenchmarkResult, output_dir: Path) -> Path:
         f"- 评测目录：`{result.eval_data_dir}`",
         f"- 输出目录：`{result.output_dir}`",
         f"- 参与模型：`{', '.join(result.model_names)}`",
+        "",
+        "指标定义见项目文档 `docs/metrics.md`（Macro-F1、取货 F1/Recall/Precision、货框 Micro-F1、精确匹配等）。",
         "",
         "## 训练数据概览",
         "",
@@ -425,7 +456,7 @@ def _write_benchmark_report(result: BenchmarkResult, output_dir: Path) -> Path:
         [
             "## 规则基线",
             "",
-            f"- 基线方法：`{RULE_BASELINE_NAME}`（与 event_engine 碰撞规则 + M-of-N 门控一致）",
+            f"- 基线方法：`{baseline_name}`（外部 `collision.py`，fps=15，`pose_frame_interval={result.feature_frame_stride}`，仅计分实际推理帧）",
         ]
     )
     if result.baseline_report is not None:
@@ -458,7 +489,7 @@ def _write_benchmark_report(result: BenchmarkResult, output_dir: Path) -> Path:
             "",
             "## 基线对比结论",
             "",
-            _baseline_summary(result.comparison),
+            _baseline_summary(result.comparison, baseline_name=baseline_name),
             "",
             "## 结论",
             "",
@@ -467,7 +498,7 @@ def _write_benchmark_report(result: BenchmarkResult, output_dir: Path) -> Path:
             "## 输出文件",
             "",
             "- `benchmark_summary.json`：完整训练、测试与对比结果。",
-            f"- `{RULE_BASELINE_NAME}/eval_report.json`：规则基线评测报告。",
+            f"- `{baseline_name}/eval_report.json`：规则基线评测报告。",
             "- `<model>/train_result.json`：单模型训练结果。",
             "- `<model>/eval_report.json`：单模型 Test 集评测报告。",
             "- `<model>/eval_predictions_*.json`：单模型 Test 集逐帧预测结果。",
@@ -475,3 +506,103 @@ def _write_benchmark_report(result: BenchmarkResult, output_dir: Path) -> Path:
     )
     report_path.write_text("\n".join(lines), encoding="utf-8")
     return report_path
+
+
+def _model_evaluation_from_dict(data: dict[str, Any]) -> ModelEvaluation:
+    picking_data = dict(data.get("picking") or {})
+    box_data = dict(data.get("box") or {})
+    return ModelEvaluation(
+        model_name=str(data.get("model_name") or ""),
+        data_dir=str(data.get("data_dir") or ""),
+        record_ids=list(data.get("record_ids") or []),
+        picking=PickingMetrics(**picking_data),
+        box=BoxMetrics(**box_data),
+        evaluated_at=str(data.get("evaluated_at") or ""),
+        extra=dict(data.get("extra") or {}),
+    )
+
+
+def load_benchmark_result(output_dir: Path) -> BenchmarkResult:
+    """从 benchmark 输出目录加载已有汇总结果（含各 ML 模型评测报告）。"""
+    output_dir = Path(output_dir)
+    summary_path = output_dir / "benchmark_summary.json"
+    if not summary_path.is_file():
+        raise FileNotFoundError(f"未找到 benchmark 汇总: {summary_path}")
+    data = json.loads(summary_path.read_text(encoding="utf-8"))
+    train_results = [TrainResult(**item) for item in data.get("train_results") or []]
+    reports = [_model_evaluation_from_dict(item) for item in data.get("reports") or []]
+    baseline_report = None
+    raw_baseline = data.get("baseline_report")
+    if isinstance(raw_baseline, dict):
+        baseline_report = _model_evaluation_from_dict(raw_baseline)
+    return BenchmarkResult(
+        train_data_dir=str(data.get("train_data_dir") or ""),
+        eval_data_dir=str(data.get("eval_data_dir") or ""),
+        output_dir=str(output_dir.resolve()),
+        model_names=list(data.get("model_names") or []),
+        train_results=train_results,
+        reports=reports,
+        comparison=list(data.get("comparison") or []),
+        benchmarked_at=str(data.get("benchmarked_at") or ""),
+        baseline_report=baseline_report,
+        model_timings=dict(data.get("model_timings") or {}),
+        feature_cache_path=str(data.get("feature_cache_path") or ""),
+        feature_cache_hit=bool(data.get("feature_cache_hit") or False),
+        feature_dataset_seconds=float(data.get("feature_dataset_seconds") or 0.0),
+        feature_frame_stride=int(data.get("feature_frame_stride") or 1),
+    )
+
+
+def refresh_benchmark_baseline(output_dir: Path) -> BenchmarkResult:
+    """保留已有 ML 训练/评测结果，仅重跑规则基线并刷新对比摘要与报告。"""
+    output_dir = Path(output_dir)
+    result = load_benchmark_result(output_dir)
+    if not result.reports:
+        raise ValueError(f"benchmark 汇总中无 ML 评测报告，无法刷新基线: {output_dir}")
+
+    eval_data_dir = Path(result.eval_data_dir)
+    frame_stride = max(1, int(result.feature_frame_stride or 1))
+    eval_records = load_all_records(eval_data_dir)
+    predictions_filename = prediction_filename_for_records(eval_records)
+
+    logger.info(
+        "刷新 benchmark 规则基线: dir={}, baseline={}, pose_frame_interval={}",
+        output_dir,
+        RULE_COLLISION_BASELINE_NAME,
+        frame_stride,
+    )
+    baseline_report = run_external_collision_baseline(
+        eval_records,
+        data_dir=str(eval_data_dir.resolve()),
+        output_dir=output_dir / RULE_COLLISION_BASELINE_NAME,
+        video_fps=15.0,
+        alarm_min_consecutive_frames=3,
+        alarm_cooldown_frames=0,
+        pose_frame_interval=frame_stride,
+        predictions_filename=predictions_filename,
+    )
+
+    comparison = compare_reports_with_baseline(result.reports, baseline_report)
+    refreshed = BenchmarkResult(
+        train_data_dir=result.train_data_dir,
+        eval_data_dir=result.eval_data_dir,
+        output_dir=str(output_dir.resolve()),
+        model_names=result.model_names,
+        train_results=result.train_results,
+        reports=result.reports,
+        comparison=comparison,
+        benchmarked_at=datetime.now(timezone.utc).isoformat(),
+        baseline_report=baseline_report,
+        model_timings=result.model_timings,
+        feature_cache_path=result.feature_cache_path,
+        feature_cache_hit=result.feature_cache_hit,
+        feature_dataset_seconds=result.feature_dataset_seconds,
+        feature_frame_stride=frame_stride,
+    )
+    (output_dir / "benchmark_summary.json").write_text(
+        json.dumps(refreshed.to_dict(), ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    report_path = _write_benchmark_report(refreshed, output_dir)
+    logger.info("benchmark 基线已刷新: summary={}, report={}", output_dir / "benchmark_summary.json", report_path)
+    return refreshed
